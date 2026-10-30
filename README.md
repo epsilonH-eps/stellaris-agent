@@ -3,7 +3,7 @@
 把《群星》(Stellaris 4.5) 的实时状态读出来，交给 **DeepSeek API** 或 **DSH 插件** 推理，再由一个**串行执行器**把决定写回游戏。
 
 > v2 是重写：只保留"原生桥"这一条成熟链路（读 + 写），删掉了旧的"控制台键盘注入 / 日志模组"路径。
-> 架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，接口见 [`docs/API.md`](docs/API.md)，动作表见 [`docs/ACTION-CATALOG.md`](docs/ACTION-CATALOG.md)。
+> **使用指南见 [`docs/USAGE.md`](docs/USAGE.md)**；架构细节见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)，接口见 [`docs/API.md`](docs/API.md)，动作表见 [`docs/ACTION-CATALOG.md`](docs/ACTION-CATALOG.md)。
 
 ---
 

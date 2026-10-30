@@ -134,10 +134,11 @@ function Set-StatusLabel($label, $text, $color) {
 function Show-BackendDialog {
   $backend = 'deepseek'
   $url = 'http://127.0.0.1:49939'
-  if ($cfg -and $cfg.ai) {
-    if ($cfg.ai.backend) { $backend = [string]$cfg.ai.backend }
-    if ($cfg.ai.dsh -and $cfg.ai.dsh.url) { $url = [string]$cfg.ai.dsh.url }
-  }
+  # 兼容 v1 配置（swarm.backend / swarm.dshUrl）与 v2（ai.*）
+  if ($cfg -and $cfg.ai -and $cfg.ai.backend) { $backend = [string]$cfg.ai.backend }
+  elseif ($cfg -and $cfg.swarm -and $cfg.swarm.backend) { $backend = [string]$cfg.swarm.backend }
+  if ($cfg -and $cfg.ai -and $cfg.ai.dsh -and $cfg.ai.dsh.url) { $url = [string]$cfg.ai.dsh.url }
+  elseif ($cfg -and $cfg.swarm -and $cfg.swarm.dshUrl) { $url = [string]$cfg.swarm.dshUrl }
   $dlg = New-Object System.Windows.Forms.Form
   $dlg.Text = '群星参谋 v2 · 选择主控'
   $dlg.Size = New-Object System.Drawing.Size(600, 380)
@@ -949,10 +950,10 @@ $noDialog = ($env:STELLARIS_GUI_NO_DIALOG -eq '1')
 $choice = if ($SelfTest -or $noDialog) {
   $savedBackend = 'deepseek'
   $savedDsh = 'http://127.0.0.1:49939'
-  if ($cfg -and $cfg.ai) {
-    if ($cfg.ai.backend) { $savedBackend = [string]$cfg.ai.backend }
-    if ($cfg.ai.dsh -and $cfg.ai.dsh.url) { $savedDsh = [string]$cfg.ai.dsh.url }
-  }
+  if ($cfg -and $cfg.ai -and $cfg.ai.backend) { $savedBackend = [string]$cfg.ai.backend }
+  elseif ($cfg -and $cfg.swarm -and $cfg.swarm.backend) { $savedBackend = [string]$cfg.swarm.backend }
+  if ($cfg -and $cfg.ai -and $cfg.ai.dsh -and $cfg.ai.dsh.url) { $savedDsh = [string]$cfg.ai.dsh.url }
+  elseif ($cfg -and $cfg.swarm -and $cfg.swarm.dshUrl) { $savedDsh = [string]$cfg.swarm.dshUrl }
   [pscustomobject]@{ backend = $savedBackend; dshUrl = $savedDsh; apiKey = '' }
 } else {
   Show-BackendDialog
