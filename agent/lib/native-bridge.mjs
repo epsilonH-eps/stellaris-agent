@@ -120,7 +120,7 @@ export class NativePipe {
 }
 
 export async function findGameProcess() {
-  const command = 'Get-Process -Name Stellaris -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json -Compress'
+  const command = 'Get-Process -Name Stellaris -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json -Compress; exit 0'
   const { stdout } = await execFileAsync(POWERSHELL, ['-NoProfile', '-Command', command], { windowsHide: true })
   const text = String(stdout || '').trim()
   if (!text) return null

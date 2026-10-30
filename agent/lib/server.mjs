@@ -8,7 +8,7 @@
  */
 import { createServer } from 'node:http'
 
-import { ensureNativeBridge } from './native-bridge.mjs'
+import { ensureNativeBridge, findGameProcess, NativePipe } from './native-bridge.mjs'
 import { readAll, summarize } from './native-reader.mjs'
 import { runSteps } from './native-operator.mjs'
 import { Swarm } from './swarm.mjs'
@@ -188,6 +188,42 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
     }
     if (req.method === 'GET' && url.pathname === '/api/swarm/status') {
       return json(res, 200, swarm ? swarm.status() : { running: false })
+    }
+    if (req.method === 'GET' && url.pathname === '/api/readiness') {
+      const dshUrl = String(config.swarm?.dshUrl || 'http://127.0.0.1:49939').replace(/\/+$/, '')
+      const result = {
+        backend: config.swarm?.backend || 'local',
+        ai: { configured: Boolean(String(config.deepseek?.apiKey || '').trim()) },
+        dsh: { url: dshUrl, reachable: false, error: null },
+        game: { running: false, bridge: false, date: null, error: null },
+      }
+      try {
+        const response = await fetch(dshUrl + '/api/stellaris-orchestrator/health', { signal: AbortSignal.timeout(2500) })
+        const body = await response.json().catch(() => ({}))
+        result.dsh.reachable = Boolean(response.ok && body.ok !== false)
+        if (!result.dsh.reachable) result.dsh.error = body.error || ('HTTP ' + response.status)
+      } catch (error) {
+        result.dsh.error = String(error?.message || error)
+      }
+      try {
+        const game = await findGameProcess()
+        result.game.running = Boolean(game)
+        if (game) {
+          const pipe = new NativePipe({ timeoutMs: 2500 })
+          try {
+            const status = await pipe.request('get_status')
+            result.game.bridge = true
+            result.game.date = status.date?.formatted || null
+          } catch (error) {
+            result.game.error = String(error?.message || error)
+          } finally {
+            pipe.close()
+          }
+        }
+      } catch (error) {
+        result.game.error = String(error?.message || error)
+      }
+      return json(res, 200, result)
     }
     if (req.method === 'GET' && url.pathname === '/api/native/status') {
       const bridge = await ensureNativeBridge({ log })

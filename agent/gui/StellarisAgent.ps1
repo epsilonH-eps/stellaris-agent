@@ -230,7 +230,18 @@ $form.MinimumSize = New-Object System.Drawing.Size(820, 560)
 $status = New-Object System.Windows.Forms.StatusStrip
 $statusLabel = New-Object System.Windows.Forms.ToolStripStatusLabel
 $statusLabel.Text = '未连接'
-$status.Items.Add($statusLabel) | Out-Null
+$statusLabel.Spring = $true
+$dshStatus = New-Object System.Windows.Forms.ToolStripStatusLabel
+$dshStatus.Text = 'DSH: ?'
+$gameStatus = New-Object System.Windows.Forms.ToolStripStatusLabel
+$gameStatus.Text = '群星: ?'
+$aiStatus = New-Object System.Windows.Forms.ToolStripStatusLabel
+$aiStatus.Text = 'AI: ?'
+$startAiBtn = New-Object System.Windows.Forms.ToolStripButton
+$startAiBtn.Text = '▶ 自动运行 AI'
+$stopAiBtn = New-Object System.Windows.Forms.ToolStripButton
+$stopAiBtn.Text = '■ 停止 AI'
+$status.Items.AddRange(@($statusLabel, $dshStatus, $gameStatus, $aiStatus, $startAiBtn, $stopAiBtn)) | Out-Null
 $form.Controls.Add($status)
 
 $tabs = New-Object System.Windows.Forms.TabControl
@@ -478,10 +489,38 @@ function Update-War {
   }
 }
 
+function Update-Health {
+  try {
+    $r = Invoke-RestMethod -Uri "$base/api/readiness" -Headers $headers -TimeoutSec 8
+    if ($r.dsh.reachable) { $dshStatus.Text = 'DSH: 已连接'; $dshStatus.ForeColor = [System.Drawing.Color]::Green }
+    else { $dshStatus.Text = 'DSH: 未连接'; $dshStatus.ForeColor = [System.Drawing.Color]::Gray }
+    if ($r.game.bridge) { $gameStatus.Text = '群星: 已连接 ' + $r.game.date; $gameStatus.ForeColor = [System.Drawing.Color]::Green }
+    elseif ($r.game.running) { $gameStatus.Text = '群星: 运行中（桥未连）'; $gameStatus.ForeColor = [System.Drawing.Color]::Orange }
+    else { $gameStatus.Text = '群星: 未运行'; $gameStatus.ForeColor = [System.Drawing.Color]::Gray }
+    $aiStatus.Text = 'AI: ' + $r.backend + ' / Key ' + $(if ($r.ai.configured) { '已配置' } else { '未配置' })
+  } catch {
+    $dshStatus.Text = 'DSH: ?'; $gameStatus.Text = '群星: ?'; $aiStatus.Text = 'AI: 后端不可用'
+  }
+}
+
+$startAiBtn.Add_Click({
+  try {
+    $body = @{ objective = '' } | ConvertTo-Json
+    $r = Invoke-RestMethod -Uri "$base/api/swarm/start" -Method Post -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 60
+    if ($swarmBox) { $swarmBox.Text = ($r | ConvertTo-Json -Depth 8) }
+    Update-Health
+  } catch {
+    [System.Windows.Forms.MessageBox]::Show("启动 AI 失败：$($_.Exception.Message)", '群星参谋') | Out-Null
+  }
+})
+$stopAiBtn.Add_Click({
+  try { $null = Invoke-RestMethod -Uri "$base/api/swarm/stop" -Method Post -Headers $headers -TimeoutSec 10; Update-Health } catch { }
+})
+
 $script:timer = New-Object System.Windows.Forms.Timer
 $script:timer.Interval = 5000
-$script:timer.Add_Tick({ Update-War })
-$warRefresh.Add_Click({ Update-War })
+$script:timer.Add_Tick({ Update-War; Update-Health })
+$warRefresh.Add_Click({ Update-War; Update-Health })
 
 $chatSend.Add_Click({
   $text = $chatInput.Text.Trim()
@@ -593,7 +632,7 @@ if (-not $ok) {
   exit 1
 }
 
-$form.Add_Shown({ $script:timer.Start(); Update-War })
+$form.Add_Shown({ $script:timer.Start(); Update-War; Update-Health })
 $form.Add_FormClosed({
   $script:timer.Stop()
   if ($script:server) { Stop-Process -Id $script:server.Id -Force -ErrorAction SilentlyContinue }
