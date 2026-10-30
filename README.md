@@ -31,6 +31,8 @@ init.cmd                首次运行：生成配置目录与 config.json
 StellarisAgent.exe      构建产物（git 忽略）
 ```
 
+> 换机器开发 / 对接 API / 交接：见 [`docs/INTEGRATION.md`](docs/INTEGRATION.md)。
+
 ## 首次运行 / 初始化
 
 首次启动会自动创建：
