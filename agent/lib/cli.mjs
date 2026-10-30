@@ -30,6 +30,7 @@ import { NATIVE_WRITE_ACTIONS, auditAgainstDsl } from './native-actions.mjs'
 import { buildChains, saveChains, loadChains, chainOf } from './event-chains.mjs'
 import { CATALOGUE } from '../../engine/lib/actions.js'
 import { discoverDshUrl } from './dsh-discovery.mjs'
+import { findGameProcess } from './native-bridge.mjs'
 import { listVerbs, runVerb } from './native-verbs.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -310,6 +311,28 @@ export async function run(argv) {
         } finally {
           bridge.pipe.close()
         }
+      }
+      case 'doctor': {
+        const game = await findGameProcess()
+        let injection = null
+        if (game) {
+          const bridge = await ensureNativeBridge({ log })
+          injection = bridge.ok
+            ? { ok: true, injected: bridge.injected, date: bridge.status?.date?.formatted || null, inGame: Boolean(bridge.status?.in_game) }
+            : { ok: false, error: bridge.error, detail: bridge.detail || null }
+          try { bridge.pipe?.close() } catch {}
+        }
+        const dsh = await discoverDshUrl()
+        out(pretty({
+          home: agentHome(),
+          config: configFile(),
+          installDir: engine.status().installDir,
+          apiKey: Boolean(String(config.deepseek?.apiKey || '').trim()),
+          game,
+          injection,
+          dsh,
+        }))
+        return 0
       }
       case 'dsh-discover': {
         out(pretty(await discoverDshUrl()))
