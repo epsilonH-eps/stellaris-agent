@@ -173,8 +173,10 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       const status = engine.status()
       let tail = ''
       try { tail = readFileSync(logFile(), 'utf8').split(/\r?\n/).slice(-200).join('\n') } catch {}
+      const game = await findGameProcess().catch(() => null)
       return json(res, 200, {
         time: new Date().toISOString(),
+        game,
         node: process.version,
         platform: process.platform,
         config: {

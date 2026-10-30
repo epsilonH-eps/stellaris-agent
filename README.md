@@ -61,6 +61,7 @@ C:\Users\<你>\.stellaris-agent\config.json
 API Key、群星安装目录、DSH 地址都在「设置」页修改，保存后自动重启后端。
 
 - **群星安装目录**：留空会自动在常见 Steam 库查找；装在别的盘时点「浏览」选中 `Stellaris` 目录；
+- **群星用户目录**：留空会自动找 `Documents`/`OneDrive\Documents`/`OneDrive\文档`，并读取 Windows 的「文档」已知文件夹（文档被 OneDrive 或别的盘接管时也能找到）；找不到时点「浏览」选 `Paradox Interactive\Stellaris`；
 - **DSH 地址**：点「自动检测」会扫描 DSH 进程正在监听的端口，并探测 `dsh-stellaris-bridge` 插件；启动选择主控时也会自动检测一次。
 
 如果状态栏显示 `群星: 运行中（桥未连）`，点状态栏的 **「连接群星」**；原生桥会注入游戏进程。注入成功但显示“还在主菜单”时，读档或新开一局即可。

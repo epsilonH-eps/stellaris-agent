@@ -14,19 +14,35 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+
+function documentsFolder() {
+  try {
+    const out = execFileSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders', '/v', 'Personal'], { encoding: 'utf8', windowsHide: true })
+    const match = /Personal\s+REG_\w+\s+(.+)$/m.exec(out)
+    if (!match) return null
+    return match[1].trim().replace(/%([^%]+)%/g, (_, key) => process.env[key] || '')
+  } catch {
+    return null
+  }
+}
 
 export function userDirCandidates() {
   const home = homedir()
   const list = [
     join(home, 'Documents', 'Paradox Interactive', 'Stellaris'),
     join(home, 'OneDrive', 'Documents', 'Paradox Interactive', 'Stellaris'),
+    join(home, 'OneDrive', '文档', 'Paradox Interactive', 'Stellaris'),
   ]
   if (process.env.OneDrive) {
     list.push(join(process.env.OneDrive, 'Documents', 'Paradox Interactive', 'Stellaris'))
+    list.push(join(process.env.OneDrive, '文档', 'Paradox Interactive', 'Stellaris'))
   }
-  if (process.env.USERPROFILE) {
-    list.push(join(process.env.USERPROFILE, 'Documents', 'Paradox Interactive', 'Stellaris'))
+  if (process.env.UserProfile || process.env.USERPROFILE) {
+    list.push(join(process.env.UserProfile || process.env.USERPROFILE, 'Documents', 'Paradox Interactive', 'Stellaris'))
   }
+  const docs = documentsFolder()
+  if (docs) list.push(join(docs, 'Paradox Interactive', 'Stellaris'))
   return [...new Set(list)]
 }
 

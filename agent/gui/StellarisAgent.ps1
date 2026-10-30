@@ -214,7 +214,7 @@ function Save-BackendChoice($choice) {
 
 
 
-function Save-AgentSettings($key, $dshUrl, $gamePath) {
+function Save-AgentSettings($key, $dshUrl, $gamePath, $userPath) {
   $obj = $null
   if (Test-Path $configFile) {
     try { $obj = Get-Content $configFile -Raw | ConvertFrom-Json } catch { $obj = $null }
@@ -225,6 +225,7 @@ function Save-AgentSettings($key, $dshUrl, $gamePath) {
   $obj.deepseek | Add-Member -NotePropertyName apiKey -NotePropertyValue $key -Force
   $obj.swarm | Add-Member -NotePropertyName dshUrl -NotePropertyValue $dshUrl -Force
   if ($gamePath) { $obj | Add-Member -NotePropertyName stellarisInstallDir -NotePropertyValue $gamePath -Force }
+  if ($userPath) { $obj | Add-Member -NotePropertyName stellarisUserDir -NotePropertyValue $userPath -Force }
   New-Item -ItemType Directory -Force (Split-Path $configFile -Parent) | Out-Null
   $obj | ConvertTo-Json -Depth 20 | Set-Content $configFile -Encoding utf8
 }
@@ -492,7 +493,7 @@ $tabSettings = New-Object System.Windows.Forms.TabPage
 $tabSettings.Text = '设置'
 $settingsPanel = New-Object System.Windows.Forms.Panel
 $settingsPanel.Dock = 'Top'
-$settingsPanel.Height = 240
+$settingsPanel.Height = 290
 
 $settingsLabel = New-Object System.Windows.Forms.Label
 $settingsLabel.Text = 'DeepSeek API Key'
@@ -526,17 +527,34 @@ $settingsBrowse.Add_Click({
 })
 $settingsPanel.Controls.Add($settingsBrowse)
 
+$settingsUserLabel = New-Object System.Windows.Forms.Label
+$settingsUserLabel.Text = '群星用户目录'
+$settingsUserLabel.SetBounds(20, 98, 120, 22)
+$settingsPanel.Controls.Add($settingsUserLabel)
+$settingsUser = New-Object System.Windows.Forms.TextBox
+$settingsUser.SetBounds(150, 96, 420, 24)
+if ($cfg -and $cfg.stellarisUserDir) { $settingsUser.Text = [string]$cfg.stellarisUserDir }
+$settingsPanel.Controls.Add($settingsUser)
+$settingsUserBrowse = New-Object System.Windows.Forms.Button
+$settingsUserBrowse.Text = '浏览'
+$settingsUserBrowse.SetBounds(580, 94, 60, 26)
+$settingsUserBrowse.Add_Click({
+  $fb = New-Object System.Windows.Forms.FolderBrowserDialog
+  if ($fb.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $settingsUser.Text = $fb.SelectedPath }
+})
+$settingsPanel.Controls.Add($settingsUserBrowse)
+
 $settingsDshLabel = New-Object System.Windows.Forms.Label
 $settingsDshLabel.Text = 'DSH 地址'
-$settingsDshLabel.SetBounds(20, 98, 120, 22)
+$settingsDshLabel.SetBounds(20, 138, 120, 22)
 $settingsPanel.Controls.Add($settingsDshLabel)
 $settingsDsh = New-Object System.Windows.Forms.TextBox
-$settingsDsh.SetBounds(150, 96, 300, 24)
+$settingsDsh.SetBounds(150, 136, 300, 24)
 if ($cfg -and $cfg.swarm -and $cfg.swarm.dshUrl) { $settingsDsh.Text = [string]$cfg.swarm.dshUrl }
 $settingsPanel.Controls.Add($settingsDsh)
 $settingsDshDetect = New-Object System.Windows.Forms.Button
 $settingsDshDetect.Text = '自动检测'
-$settingsDshDetect.SetBounds(460, 94, 100, 26)
+$settingsDshDetect.SetBounds(460, 134, 100, 26)
 $settingsDshDetect.Add_Click({
   try {
     $bin = Join-Path $root 'bin\stellaris-agent.mjs'
@@ -550,14 +568,14 @@ $settingsPanel.Controls.Add($settingsDshDetect)
 
 $settingsSave = New-Object System.Windows.Forms.Button
 $settingsSave.Text = '保存设置并重启后端'
-$settingsSave.SetBounds(150, 140, 180, 30)
+$settingsSave.SetBounds(150, 180, 180, 30)
 $settingsDiag = New-Object System.Windows.Forms.Button
 $settingsDiag.Text = '导出诊断日志'
-$settingsDiag.SetBounds(350, 140, 140, 30)
+$settingsDiag.SetBounds(350, 180, 140, 30)
 $settingsPanel.Controls.Add($settingsDiag)
 $settingsPanel.Controls.Add($settingsSave)
 $settingsStatus = New-Object System.Windows.Forms.Label
-$settingsStatus.SetBounds(20, 184, 620, 40)
+$settingsStatus.SetBounds(20, 228, 620, 40)
 $settingsStatus.ForeColor = [System.Drawing.Color]::Gray
 $settingsStatus.Text = 'Key / 群星目录 / DSH 地址保存后自动重启后端。'
 $settingsPanel.Controls.Add($settingsStatus)
@@ -742,9 +760,10 @@ $settingsSave.Add_Click({
   $key = $settingsKey.Text.Trim()
   $dshUrl = $settingsDsh.Text.Trim()
   $gamePath = $settingsGame.Text.Trim()
+  $userPath = $settingsUser.Text.Trim()
   if (-not $key) { $settingsStatus.Text = 'Key 不能为空'; return }
   try {
-    Save-AgentSettings $key $dshUrl $gamePath
+    Save-AgentSettings $key $dshUrl $gamePath $userPath
     $settingsStatus.Text = '已保存，正在重启后端...'
     if ($script:server) { Stop-Process -Id $script:server.Id -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 600
