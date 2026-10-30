@@ -267,7 +267,7 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
         backend: config.swarm?.backend || 'local',
         ai: { configured: Boolean(String(config.deepseek?.apiKey || '').trim()) },
         dsh: { url: dshUrl, reachable: false, error: null },
-        game: { running: false, bridge: false, date: null, error: null },
+        game: { running: false, bridge: false, inGame: false, date: null, error: null },
       }
       try {
         const response = await fetch(dshUrl + '/api/stellaris-orchestrator/health', { signal: AbortSignal.timeout(2500) })
@@ -295,6 +295,7 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
           try {
             const status = await pipe.request('get_status')
             result.game.bridge = true
+            result.game.inGame = Boolean(status.in_game)
             result.game.date = status.date?.formatted || null
           } catch (error) {
             result.game.error = String(error?.message || error)

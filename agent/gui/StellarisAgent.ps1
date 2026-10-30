@@ -651,6 +651,15 @@ $connectGameBtn.Add_Click({
 
 $startAiBtn.Add_Click({
   try {
+    $ready = Invoke-RestMethod -Uri "$base/api/readiness" -Headers $headers -TimeoutSec 8
+    if (-not $ready.game.bridge -or -not $ready.game.inGame) {
+      [System.Windows.Forms.MessageBox]::Show('群星还没连接/没进局。先启动游戏并读档，再点「连接群星」。', '群星参谋') | Out-Null
+      return
+    }
+    if ($ready.backend -eq 'local' -and -not $ready.ai.configured) {
+      [System.Windows.Forms.MessageBox]::Show('本地主控需要先在「设置」页填写 DeepSeek API Key。', '群星参谋') | Out-Null
+      return
+    }
     $body = @{ objective = '' } | ConvertTo-Json
     $r = Invoke-RestMethod -Uri "$base/api/swarm/start" -Method Post -Headers $headers -ContentType 'application/json; charset=utf-8' -Body ([System.Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 60
     if ($swarmBox) { $swarmBox.Text = ($r | ConvertTo-Json -Depth 8) }
