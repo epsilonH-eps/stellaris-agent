@@ -105,7 +105,11 @@ export class Swarm {
 
   async start({ once = false } = {}) {
     const bridge = await ensureNativeBridge({ log: this.log })
-    if (!bridge.ok) return { ok: false, error: bridge.error || 'BRIDGE_UNAVAILABLE' }
+    if (!bridge.ok) return { ok: false, error: bridge.error || 'BRIDGE_UNAVAILABLE', detail: bridge.detail || null }
+    if (!bridge.status?.in_game) {
+      try { bridge.pipe.close() } catch {}
+      return { ok: false, error: 'GAME_NOT_IN_SESSION', detail: '游戏进程在，但还停在主菜单；请读档或新开一局' }
+    }
     this.pipe = bridge.pipe
     this.stopped = false
     await this.discover()

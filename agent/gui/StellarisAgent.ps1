@@ -622,6 +622,7 @@ function Get-ApiFailure($err) {
   } else { $detail = $err.Exception.Message }
   switch ($detail) {
     'GAME_NOT_RUNNING' { return '群星没有运行。先启动游戏并读档/新开一局，再点「连接群星」。' }
+    'GAME_NOT_IN_SESSION' { return '群星在运行，但还停在主菜单；请读档或新开一局，再点「自动运行 AI」。' }
     'INJECT_FAILED' { return '原生桥注入失败：确认游戏是 4.5.2、程序与游戏权限一致、杀软未拦截。' }
     'PIPE_NOT_READY' { return '注入成功但管道没起来；完全重启游戏后再试。' }
     'DLL_NOT_FOUND' { return '找不到 stellaris_bridge.dll，检查 agent/native 目录。' }

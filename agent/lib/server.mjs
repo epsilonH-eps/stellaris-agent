@@ -174,6 +174,19 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       let tail = ''
       try { tail = readFileSync(logFile(), 'utf8').split(/\r?\n/).slice(-200).join('\n') } catch {}
       const game = await findGameProcess().catch(() => null)
+      if (game) {
+        const pipe = new NativePipe({ timeoutMs: 1500 })
+        try {
+          const status = await pipe.request('get_status')
+          game.bridge = true
+          game.inGame = Boolean(status.in_game)
+          game.date = status.date?.formatted || null
+        } catch (error) {
+          game.bridge = false
+          game.inGame = false
+          game.error = String(error?.message || error)
+        } finally { pipe.close() }
+      }
       return json(res, 200, {
         time: new Date().toISOString(),
         game,
