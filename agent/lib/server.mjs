@@ -173,6 +173,19 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       const status = engine.status()
       let tail = ''
       try { tail = readFileSync(logFile(), 'utf8').split(/\r?\n/).slice(-200).join('\n') } catch {}
+      const dshUrl = String(config.swarm?.dshUrl || '').replace(/\/+$/, '')
+      let dsh = { url: dshUrl, reachable: false, service: null, error: null }
+      if (dshUrl) {
+        try {
+          const response = await fetch(dshUrl + '/api/stellaris-orchestrator/health', { signal: AbortSignal.timeout(2500) })
+          const body = await response.json().catch(() => ({}))
+          dsh.reachable = Boolean(response.ok && body.ok !== false)
+          dsh.service = body.service || null
+          if (!dsh.reachable) dsh.error = body.error || ('HTTP ' + response.status)
+        } catch (error) {
+          dsh.error = String(error?.message || error)
+        }
+      }
       const game = await findGameProcess().catch(() => null)
       if (game) {
         const pipe = new NativePipe({ timeoutMs: 1500 })
@@ -190,6 +203,7 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       return json(res, 200, {
         time: new Date().toISOString(),
         game,
+        dsh,
         node: process.version,
         platform: process.platform,
         config: {
