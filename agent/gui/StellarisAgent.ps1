@@ -251,6 +251,13 @@ $script:dshUrl = $choice.dshUrl
 $server = $null
 function Start-Backend {
   $bin = Join-Path $root 'bin\stellaris-agent.mjs'
+  # 清掉旧的后端进程，避免端口 8787 被旧代码占着
+  try {
+    Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -match 'stellaris-agent' -and $_.CommandLine -match 'serve' } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 400
+  } catch { }
   $logDir = Join-Path $agentHome 'logs'
     New-Item -ItemType Directory -Force $logDir | Out-Null
     $script:server = Start-Process -FilePath $node -ArgumentList @($bin, 'serve', '--port', "$Port") -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDir 'backend.out.log') -RedirectStandardError (Join-Path $logDir 'backend.err.log')

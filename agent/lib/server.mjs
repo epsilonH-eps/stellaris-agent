@@ -220,8 +220,9 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       })
     }
     if (req.method === 'POST' && url.pathname === '/api/swarm/start') {
+      log('swarm.start.request', { backend: config.swarm?.backend || 'local', dshUrl: config.swarm?.dshUrl || null })
       const body = await readBody(req)
-      if (!orchestrator && (config.swarm?.backend || 'local') !== 'dsh') return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' })
+      if (!orchestrator && (config.swarm?.backend || 'local') !== 'dsh') { log('swarm.start.no-key'); return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' }) }
       if (swarm) return json(res, 200, { ok: true, already: true, status: swarm.status() })
       try {
         const config = { ...config, swarm: { ...(config.swarm || {}), ...(body?.objective ? { objective: String(body.objective) } : {}) } }
