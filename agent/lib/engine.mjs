@@ -146,7 +146,8 @@ export class Engine {
   // ---------------------------------------------------------------- 读
   status() {
     const dir = this.dir
-    const mods = dir ? detectLocalMods(dir) : { reader: false, console: false, modDirExists: false }
+    const detected = dir ? detectLocalMods(dir) : { reader: false, console: false, modDirExists: false }
+    const mods = { ...detected, optional: true, native: true }
     const install = resolveInstallDir(this.config)
     return {
       userDir: dir,

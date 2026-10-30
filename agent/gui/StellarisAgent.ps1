@@ -564,7 +564,7 @@ function Update-War {
     $s = Invoke-RestMethod -Uri "$base/api/status" -Headers $headers -TimeoutSec 5
     $b = Invoke-RestMethod -Uri "$base/api/brief" -Headers $headers -TimeoutSec 8
     $snap = if ($s.snapshot.date) { "$($s.snapshot.date)（$($s.snapshot.ageSec)s 前）" } else { '无快照' }
-    $mods = if ($s.mods.reader -and $s.mods.console) { '模组 OK' } else { '模组缺失' }
+    $mods = if ($s.mods.reader -and $s.mods.console) { '模组 OK' } else { '原生桥模式（模组可选）' }
     $script:statusLabel.Text = "用户目录：$($s.userDir) ｜ 快照：$snap ｜ $mods ｜ 注入：$($s.injection)"
     $warBox.Text = [string]$b.brief
   } catch {
