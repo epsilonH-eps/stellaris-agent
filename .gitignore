@@ -1,0 +1,19 @@
+# runtime / build artifacts
+agent/runtime/
+*.exe
+dist/
+build-tools/
+*.zip
+
+# local config and logs
+config.json
+*.log
+.local/
+.tmp/
+
+# node
+node_modules/
+
+# OS
+Thumbs.db
+.DS_Store

@@ -1,0 +1,71 @@
+{
+  "stellarisUserDir": "",
+  "stellarisInstallDir": "",
+  "gameTitleMatch": "Stellaris",
+  "consoleKey": "`",
+  "injection": "auto",
+  "ackTimeoutMs": 6000,
+  "injectGapMs": 1200,
+  "uiMode": "hotkey",
+  "uiHotkeys": {
+    "ascension": "F5",
+    "traditions": "F4",
+    "technology": "F2",
+    "government": "F1",
+    "leaders": "F6",
+    "fleets": "F7",
+    "diplomacy": "F8",
+    "relics": "F9",
+    "policies": "F3",
+    "planets": "F10"
+  },
+  "safety": {
+    "allowExperimental": false,
+    "allowRawEffect": false,
+    "maxResourcePerAction": 50000,
+    "requireConfirmOver": 3,
+    "maxActionsPerTurn": 8
+  },
+  "deepseek": {
+    "apiKey": "",
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "reasonerModel": "deepseek-reasoner",
+    "temperature": 0.4,
+    "maxTokens": 4096,
+    "maxSteps": 8,
+    "timeoutMs": 120000,
+    "useTools": true
+  },
+  "operator": {
+    "enabled": true,
+    "model": "",
+    "maxSteps": 4
+  },
+  "journal": {
+    "enabled": true
+  },
+  "liveChat": {
+    "enabled": true,
+    "port": 8787,
+    "token": "",
+    "allowSay": true,
+    "maxQueue": 200
+  },
+  "log": {
+    "maxBackfillBytes": 524288,
+    "pollMs": 1500
+  },
+  "swarm": {
+    "tickSeconds": 60,
+    "mainTickSeconds": 180,
+    "queuePauseThreshold": 10,
+    "attempts": 5,
+    "autoUnpause": false,
+    "components": [],
+    "watchSeconds": 15,
+    "megastructureScanSeconds": 300,
+    "backend": "local",
+    "dshUrl": "http://127.0.0.1:49939"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "stellaris-agent",
+  "version": "0.1.0",
+  "description": "独立版群星 Agent：读档、思考（DeepSeek API）、执行、记账。不需要 DSH 运行。",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "stellaris-agent": "./bin/stellaris-agent.mjs"
+  },
+  "main": "./lib/engine.mjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "node bin/stellaris-agent.mjs",
+    "selftest": "node bin/stellaris-agent.mjs selftest"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "test",
+    "README.md",
+    "docs",
+    "config.example.json",
+    "run.cmd"
+  ]
+}

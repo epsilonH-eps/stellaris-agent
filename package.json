@@ -1,0 +1,16 @@
+{
+  "name": "stellaris-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "群星参谋：把 Stellaris 4.5 的状态读出来，交给 DeepSeek/DSH 推理，再通过原生桥执行操作。",
+  "type": "module",
+  "scripts": {
+    "gui": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/gui/StellarisAgent.ps1",
+    "build:node": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bundle-node.ps1",
+    "build:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1",
+    "install:dsh": "powershell -NoProfile -ExecutionPolicy Bypass -File dsh-stellaris-bridge/install.ps1"
+  },
+  "keywords": ["stellaris", "deepseek", "dsh", "stellantis", "ai"],
+  "license": "MIT",
+  "engines": { "node": ">=22" }
+}

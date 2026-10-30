@@ -1,0 +1,27 @@
+{
+  "name": "dsh-stellaris-bridge",
+  "version": "0.1.0",
+  "description": "DSH 侧编排后端：让群星参谋程序把主会话/组件子会话交给 DSH 运行。",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "stellaris",
+    "subagent"
+  ],
+  "license": "MIT",
+  "engines": {
+    "dsh": ">=0.1.7-rc.1",
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
