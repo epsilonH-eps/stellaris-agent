@@ -89,6 +89,15 @@ function Show-BackendDialog {
     if ($cfg.swarm.backend) { $backend = [string]$cfg.swarm.backend }
     if ($cfg.swarm.dshUrl) { $url = [string]$cfg.swarm.dshUrl }
   }
+  # 选了 DSH 就自动探测已安装插件监听的端口
+  if ($backend -eq 'dsh' -and $node -and $root) {
+    try {
+      $bin = Join-Path $root 'bin\stellaris-agent.mjs'
+      $raw = (& $node $bin dsh-discover 2>$null) -join "`n"
+      $found = $raw | ConvertFrom-Json
+      if ($found.ok -and $found.url) { $url = [string]$found.url }
+    } catch { }
+  }
   $dlg = New-Object System.Windows.Forms.Form
   $dlg.Text = '群星参谋 · 选择主控'
   $dlg.Size = New-Object System.Drawing.Size(560, 400)
@@ -122,9 +131,24 @@ function Show-BackendDialog {
 
   $urlBox = New-Object System.Windows.Forms.TextBox
   $urlBox.Text = $url
-  $urlBox.SetBounds(110, 126, 320, 24)
+  $urlBox.SetBounds(110, 126, 300, 24)
   $urlBox.Enabled = ($backend -eq 'dsh')
   $dlg.Controls.Add($urlBox)
+
+  $urlDetect = New-Object System.Windows.Forms.Button
+  $urlDetect.Text = '自动检测'
+  $urlDetect.SetBounds(418, 124, 100, 26)
+  $urlDetect.Enabled = ($backend -eq 'dsh')
+  $urlDetect.Add_Click({
+    try {
+      $bin = Join-Path $root 'bin\stellaris-agent.mjs'
+      $raw = (& $node $bin dsh-discover 2>$null) -join "`n"
+      $found = $raw | ConvertFrom-Json
+      if ($found.ok -and $found.url) { $urlBox.Text = [string]$found.url }
+      else { [System.Windows.Forms.MessageBox]::Show('没有找到运行中的 DSH 插件；先启动 DSH。', '群星参谋') | Out-Null }
+    } catch { [System.Windows.Forms.MessageBox]::Show('检测失败：' + $_.Exception.Message, '群星参谋') | Out-Null }
+  })
+  $dlg.Controls.Add($urlDetect)
 
   $hint = New-Object System.Windows.Forms.Label
   $hint.Text = '选择会写入 config.json；DSH 模式需要重启 DSH 加载插件。'
@@ -161,8 +185,8 @@ function Show-BackendDialog {
   $dlg.Controls.Add($cancel)
   $dlg.AcceptButton = $ok
   $dlg.CancelButton = $cancel
-  $dshRadio.Add_CheckedChanged({ $urlBox.Enabled = $dshRadio.Checked })
-  $localRadio.Add_CheckedChanged({ $urlBox.Enabled = $dshRadio.Checked })
+  $dshRadio.Add_CheckedChanged({ $urlBox.Enabled = $dshRadio.Checked; $urlDetect.Enabled = $dshRadio.Checked })
+  $localRadio.Add_CheckedChanged({ $urlBox.Enabled = $dshRadio.Checked; $urlDetect.Enabled = $dshRadio.Checked })
 
   if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return $null }
   $chosen = if ($dshRadio.Checked) { 'dsh' } else { 'local' }
@@ -188,6 +212,22 @@ function Save-BackendChoice($choice) {
   $obj | ConvertTo-Json -Depth 20 | Set-Content $configFile -Encoding utf8
 }
 
+
+
+function Save-AgentSettings($key, $dshUrl, $gamePath) {
+  $obj = $null
+  if (Test-Path $configFile) {
+    try { $obj = Get-Content $configFile -Raw | ConvertFrom-Json } catch { $obj = $null }
+  }
+  if (-not $obj) { $obj = [pscustomobject]@{} }
+  if (-not $obj.PSObject.Properties['deepseek']) { $obj | Add-Member -NotePropertyName deepseek -NotePropertyValue ([pscustomobject]@{}) -Force }
+  if (-not $obj.PSObject.Properties['swarm']) { $obj | Add-Member -NotePropertyName swarm -NotePropertyValue ([pscustomobject]@{}) -Force }
+  $obj.deepseek | Add-Member -NotePropertyName apiKey -NotePropertyValue $key -Force
+  $obj.swarm | Add-Member -NotePropertyName dshUrl -NotePropertyValue $dshUrl -Force
+  if ($gamePath) { $obj | Add-Member -NotePropertyName stellarisInstallDir -NotePropertyValue $gamePath -Force }
+  New-Item -ItemType Directory -Force (Split-Path $configFile -Parent) | Out-Null
+  $obj | ConvertTo-Json -Depth 20 | Set-Content $configFile -Encoding utf8
+}
 
 function Save-DeepSeekKey($key) {
   $obj = $null
@@ -448,7 +488,8 @@ $tabSettings = New-Object System.Windows.Forms.TabPage
 $tabSettings.Text = '设置'
 $settingsPanel = New-Object System.Windows.Forms.Panel
 $settingsPanel.Dock = 'Top'
-$settingsPanel.Height = 140
+$settingsPanel.Height = 240
+
 $settingsLabel = New-Object System.Windows.Forms.Label
 $settingsLabel.Text = 'DeepSeek API Key'
 $settingsLabel.SetBounds(20, 18, 120, 22)
@@ -463,14 +504,54 @@ $settingsShow.Text = '显示'
 $settingsShow.SetBounds(580, 16, 60, 24)
 $settingsShow.Add_CheckedChanged({ $settingsKey.UseSystemPasswordChar = -not $settingsShow.Checked })
 $settingsPanel.Controls.Add($settingsShow)
+
+$settingsGameLabel = New-Object System.Windows.Forms.Label
+$settingsGameLabel.Text = '群星安装目录'
+$settingsGameLabel.SetBounds(20, 58, 120, 22)
+$settingsPanel.Controls.Add($settingsGameLabel)
+$settingsGame = New-Object System.Windows.Forms.TextBox
+$settingsGame.SetBounds(150, 56, 420, 24)
+if ($cfg -and $cfg.stellarisInstallDir) { $settingsGame.Text = [string]$cfg.stellarisInstallDir }
+$settingsPanel.Controls.Add($settingsGame)
+$settingsBrowse = New-Object System.Windows.Forms.Button
+$settingsBrowse.Text = '浏览'
+$settingsBrowse.SetBounds(580, 54, 60, 26)
+$settingsBrowse.Add_Click({
+  $fb = New-Object System.Windows.Forms.FolderBrowserDialog
+  if ($fb.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $settingsGame.Text = $fb.SelectedPath }
+})
+$settingsPanel.Controls.Add($settingsBrowse)
+
+$settingsDshLabel = New-Object System.Windows.Forms.Label
+$settingsDshLabel.Text = 'DSH 地址'
+$settingsDshLabel.SetBounds(20, 98, 120, 22)
+$settingsPanel.Controls.Add($settingsDshLabel)
+$settingsDsh = New-Object System.Windows.Forms.TextBox
+$settingsDsh.SetBounds(150, 96, 300, 24)
+if ($cfg -and $cfg.swarm -and $cfg.swarm.dshUrl) { $settingsDsh.Text = [string]$cfg.swarm.dshUrl }
+$settingsPanel.Controls.Add($settingsDsh)
+$settingsDshDetect = New-Object System.Windows.Forms.Button
+$settingsDshDetect.Text = '自动检测'
+$settingsDshDetect.SetBounds(460, 94, 100, 26)
+$settingsDshDetect.Add_Click({
+  try {
+    $bin = Join-Path $root 'bin\stellaris-agent.mjs'
+    $raw = (& $node $bin dsh-discover 2>$null) -join "`n"
+    $found = $raw | ConvertFrom-Json
+    if ($found.ok) { $settingsDsh.Text = [string]$found.url }
+    else { [System.Windows.Forms.MessageBox]::Show('没有找到运行中的 DSH 插件。', '群星参谋') | Out-Null }
+  } catch { }
+})
+$settingsPanel.Controls.Add($settingsDshDetect)
+
 $settingsSave = New-Object System.Windows.Forms.Button
-$settingsSave.Text = '保存并重启后端'
-$settingsSave.SetBounds(150, 54, 160, 30)
+$settingsSave.Text = '保存设置并重启后端'
+$settingsSave.SetBounds(150, 140, 180, 30)
 $settingsPanel.Controls.Add($settingsSave)
 $settingsStatus = New-Object System.Windows.Forms.Label
-$settingsStatus.SetBounds(20, 96, 620, 22)
+$settingsStatus.SetBounds(20, 184, 620, 40)
 $settingsStatus.ForeColor = [System.Drawing.Color]::Gray
-$settingsStatus.Text = '保存后自动重启后端；下次启动也会沿用。'
+$settingsStatus.Text = 'Key / 群星目录 / DSH 地址保存后自动重启后端。'
 $settingsPanel.Controls.Add($settingsStatus)
 $tabSettings.Controls.Add($settingsPanel)
 $tabs.TabPages.Add($tabSettings)
@@ -607,9 +688,11 @@ $swarmRefresh.Add_Click({
 
 $settingsSave.Add_Click({
   $key = $settingsKey.Text.Trim()
+  $dshUrl = $settingsDsh.Text.Trim()
+  $gamePath = $settingsGame.Text.Trim()
   if (-not $key) { $settingsStatus.Text = 'Key 不能为空'; return }
   try {
-    Save-DeepSeekKey $key
+    Save-AgentSettings $key $dshUrl $gamePath
     $settingsStatus.Text = '已保存，正在重启后端...'
     if ($script:server) { Stop-Process -Id $script:server.Id -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Milliseconds 600

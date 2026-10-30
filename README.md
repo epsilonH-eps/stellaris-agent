@@ -58,7 +58,10 @@ C:\Users\<你>\.stellaris-agent\config.json
 3. 填 DeepSeek API Key；
 4. 进入主窗口：战局 / 对话 / 操作 / 原生桥 / 事件链 / 群体调度 / 设置。
 
-API Key 之后可以在「设置」页修改，保存后自动重启后端。
+API Key、群星安装目录、DSH 地址都在「设置」页修改，保存后自动重启后端。
+
+- **群星安装目录**：留空会自动在常见 Steam 库查找；装在别的盘时点「浏览」选中 `Stellaris` 目录；
+- **DSH 地址**：点「自动检测」会扫描 DSH 进程正在监听的端口，并探测 `dsh-stellaris-bridge` 插件；启动选择主控时也会自动检测一次。
 
 ### 从源码
 

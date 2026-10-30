@@ -60,7 +60,11 @@ this.runner = settings.backend === 'dsh'
 }
 ```
 
-`dshUrl` 的端口就是 DSH Web GUI 的端口（设置页/启动日志里那个 `127.0.0.1:xxxxx`）。
+`dshUrl` 不用手填死：设置页点「自动检测」，或启动时选择 DSH，程序会扫描 DSH 进程监听端口并探测 `dsh-stellaris-bridge` 插件；也可以命令行：
+
+```powershell
+.\run.cmd dsh-discover
+```
 
 ## 命令
 

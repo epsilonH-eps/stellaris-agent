@@ -12,6 +12,7 @@ import { ensureNativeBridge, findGameProcess, NativePipe } from './native-bridge
 import { readAll, summarize } from './native-reader.mjs'
 import { runSteps } from './native-operator.mjs'
 import { Swarm } from './swarm.mjs'
+import { discoverDshUrl } from './dsh-discovery.mjs'
 import { agentHome } from './config.mjs'
 import { loadChains, chainOf } from './event-chains.mjs'
 import { join } from 'node:path'
@@ -189,6 +190,9 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
     if (req.method === 'GET' && url.pathname === '/api/swarm/status') {
       return json(res, 200, swarm ? swarm.status() : { running: false })
     }
+    if (req.method === 'GET' && url.pathname === '/api/dsh/discover') {
+      return json(res, 200, await discoverDshUrl())
+    }
     if (req.method === 'GET' && url.pathname === '/api/readiness') {
       const dshUrl = String(config.swarm?.dshUrl || 'http://127.0.0.1:49939').replace(/\/+$/, '')
       const result = {
@@ -204,6 +208,16 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
         if (!result.dsh.reachable) result.dsh.error = body.error || ('HTTP ' + response.status)
       } catch (error) {
         result.dsh.error = String(error?.message || error)
+      }
+      if (!result.dsh.reachable) {
+        try {
+          const detected = await discoverDshUrl({ timeoutMs: 800 })
+          if (detected.ok) {
+            result.dsh.detectedUrl = detected.url
+            result.dsh.reachable = true
+            result.dsh.error = null
+          }
+        } catch {}
       }
       try {
         const game = await findGameProcess()

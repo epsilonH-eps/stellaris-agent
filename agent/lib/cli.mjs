@@ -29,6 +29,7 @@ import { runSteps } from './native-operator.mjs'
 import { NATIVE_WRITE_ACTIONS, auditAgainstDsl } from './native-actions.mjs'
 import { buildChains, saveChains, loadChains, chainOf } from './event-chains.mjs'
 import { CATALOGUE } from '../../engine/lib/actions.js'
+import { discoverDshUrl } from './dsh-discovery.mjs'
 import { listVerbs, runVerb } from './native-verbs.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -142,6 +143,12 @@ export async function run(argv) {
             ...(flags.backend ? { backend: String(flags.backend) } : {}),
             ...(flags['dsh-url'] ? { dshUrl: String(flags['dsh-url']) } : {}),
           },
+        }
+        if ((swarmConfig.swarm.backend === 'dsh') && !flags['dsh-url']) {
+          try {
+            const found = await discoverDshUrl()
+            if (found.ok) swarmConfig.swarm.dshUrl = found.url
+          } catch {}
         }
         const swarm = new Swarm({ engine, orchestrator, config: swarmConfig, log })
         const started = await swarm.start({ once: Boolean(flags.once) })
@@ -303,6 +310,10 @@ export async function run(argv) {
         } finally {
           bridge.pipe.close()
         }
+      }
+      case 'dsh-discover': {
+        out(pretty(await discoverDshUrl()))
+        return 0
       }
       case 'init': {
         const file = configFile()
