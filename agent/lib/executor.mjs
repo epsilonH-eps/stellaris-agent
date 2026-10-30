@@ -35,6 +35,16 @@ function looseEqual(left, right) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
 
+function bridgeParams(method, params = {}) {
+  if (method !== 'select_research' && method !== 'cancel_research') return params
+  const copy = { ...params }
+  const slot = String(copy.slot ?? copy.area ?? '').toLowerCase()
+  const area = slot === 'physics' ? 0 : slot === 'society' ? 1 : slot === 'engineering' ? 2 : Number(copy.area)
+  delete copy.slot
+  if (Number.isInteger(area) && area >= 0 && area <= 2) copy.area = area
+  return copy
+}
+
 export class Executor extends EventEmitter {
   /**
    * @param {object} options
@@ -265,7 +275,7 @@ export class Executor extends EventEmitter {
     for (let attempt = 1; attempt <= this.settings.maxAttempts; attempt += 1) {
       const startedAt = Date.now()
       try {
-        const response = await this.bridge.request(method, params)
+        const response = await this.bridge.request(method, bridgeParams(method, params))
         let verify = null
         if (this.settings.verify && spec) {
           verify = await this._verify(spec, params)

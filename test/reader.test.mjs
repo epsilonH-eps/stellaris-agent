@@ -90,6 +90,48 @@ test('extractColonies / extractFleets 兼容多种结构', () => {
   assert.deepEqual(fleets.map((row) => row.fleet_id).sort(), [1, 2, 3, 4])
 })
 
+test('无效殖民地（colony_id=0xFFFFFFFF）不进入单位列表', async () => {
+  const handlers = baseHandlers()
+  handlers.get_planet_details = { system_id: 7, colony_id: 4294967295, planet_name: 'Pulsar', population: 0 }
+  const reader = new Reader({
+    bridge: new FakeBridge(handlers),
+    config: { read: { includeDiplomacyOptions: false, includeGalaxyMap: false } },
+    home: 'C:/tmp/stellaris-agent-test',
+    paths: { userDir: '', installDir: '' },
+  })
+  const world = await reader.readWorld({ deep: true, includeSave: false, eventGraph: fakeGraph })
+  assert.equal(world.colonies.length, 1)
+  assert.equal(world.colonies[0].unreadable, true)
+  assert.equal(world.colonyIssues.length, 1)
+  assert.equal(world.errors.some((row) => row.method === 'get_planet_details'), false)
+})
+
+test('舰队 system_id 为空时，用银河图 + get_system 反查位置', async () => {
+  const handlers = baseHandlers()
+  handlers.get_galaxy_overview = { player: { capital_system_id: 221, owned_systems: 1 } }
+  handlers.get_fleets = { fleets: [] }
+  handlers.get_military_fleets = { fleets: [] }
+  handlers.get_civilian_fleets = { science_ships: [], construction_ships: [{ fleet_id: 3, name: 'Builder' }], colony_ships: [] }
+  handlers.get_planet_details = { system_id: 221, colony_id: 0, planet_name: 'Capital' }
+  handlers.get_galaxy_map = {
+    rows: [
+      [221, 'Capital', 0, 0, null, 4, 0, 'SF'],
+      [225, 'Target', 0, 0, null, 3, 1, 'F'],
+    ],
+  }
+  handlers.get_system = (params) => (Number(params.system_id) === 225 ? { id: 225, fleets: [{ id: 3, name: 'Builder', ship_class: 'shipclass_constructor' }] } : { id: Number(params.system_id), fleets: [] })
+  const reader = new Reader({
+    bridge: new FakeBridge(handlers),
+    config: { read: { includeDiplomacyOptions: false, includeGalaxyMap: true } },
+    home: 'C:/tmp/stellaris-agent-test',
+    paths: { userDir: '', installDir: '' },
+  })
+  const world = await reader.readWorld({ deep: true, includeSave: false, eventGraph: fakeGraph })
+  assert.equal(world.fleetsAll.length, 1)
+  assert.equal(world.fleetsAll[0].system_id, 225)
+  assert.equal(world.fleetSystems['3'], 225)
+})
+
 test('全量读取：全局 + 殖民地 + 舰队 + 事件链（含后续）', async () => {
   const bridge = new FakeBridge(baseHandlers())
   const reader = new Reader({
@@ -106,7 +148,10 @@ test('全量读取：全局 + 殖民地 + 舰队 + 事件链（含后续）', as
   assert.equal(world.colonies[0].details.system_id, 7)
   assert.equal(world.colonies[0].jobs?.jobs?.length, 0)
   assert.equal(world.fleetsAll.length, 1)
+  assert.equal(world.fleetsAll[0].system_id, 7, '舰队 system_id 应从 militaryFleets 合并回来')
   assert.equal(world.fleetsDetail.length, 1)
+  assert.equal(world.fleetsDetail[0].system_id, 7)
+  assert.equal(world.fleetSystems['1'], 7)
   assert.equal(world.systems['7'].megastructures.length, 1)
   assert.equal(world.activeEvents.length, 1)
   assert.equal(world.eventChains.active.length, 1)

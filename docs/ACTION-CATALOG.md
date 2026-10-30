@@ -3,7 +3,7 @@
 > 生成命令：`node tools/gen-actions-doc.mjs`。唯一来源：[`agent/lib/actions.mjs`](../agent/lib/actions.mjs)。
 > 不要手改本文件。
 
-共 **58** 个写动作、**43** 个读取方法。
+共 **59** 个写动作、**44** 个读取方法。
 
 `confidence`：
 
@@ -17,7 +17,7 @@
 | `control` | 时间与执行控制 | 2 |
 | `research` | 国家科研 | 2 |
 | `council` | 国家内阁 | 6 |
-| `laws` | 法令与物种权利 | 2 |
+| `laws` | 法令与物种权利 | 3 |
 | `economy` | 经济与市场 | 2 |
 | `diplomacy` | 外交与战争 | 7 |
 | `fleet` | 舰队 | 15 |
@@ -54,6 +54,7 @@
 | 动作 | 参数 | 必填 | 说明 | 回读 | 置信 |
 | --- | --- | --- | --- | --- | --- |
 | `toggle_edict` | `edict_key: string`<br>`enabled: bool` | `edict_key`<br>`enabled` | 开关帝国法令（原生 CToggleEdictCommand） | soft `get_edicts` | verified |
+| `adopt_tradition` | `tradition_key: string` | `tradition_key` | 采纳一项传统（key 见 get_traditions 的 available/unlocked） | soft `get_traditions` | verified |
 | `set_species_rights` | `species_id: int`<br>`category: string`<br>`right_value: string` | `species_id`<br>`category`<br>`right_value` | 设置物种权利（category 见 available_rights_catalog） | soft `get_species` | verified |
 
 ## 经济与市场（`economy`）

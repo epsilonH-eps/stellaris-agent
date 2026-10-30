@@ -8,7 +8,7 @@
  *
  * @module stellaris-agent/context
  */
-import { asArray } from './reader.mjs'
+import { asArray, isValidColonyId } from './reader.mjs'
 
 export function clip(value, maxChars = 6000) {
   if (value === undefined || value === null) return value
@@ -106,6 +106,7 @@ export function worldDigest(world, { maxAlerts = 8, maxEvents = 8, maxCompletion
     },
     colonies,
     fleets,
+    colonyIssues: (world.colonyIssues || []).length,
     research,
     government: {
       ruler: world.government?.ruler_name ?? world.government?.ruler ?? null,
@@ -188,7 +189,14 @@ export function unitContext(unit, world) {
         unity: world.resources?.unity ?? null,
       }
     case 'laws':
-      return { date: world.date, edicts: world.edicts, species: world.species, unity: world.resources?.unity ?? null, influence: world.resources?.influence ?? null }
+      return {
+        date: world.date,
+        edicts: world.edicts,
+        traditions: world.traditions,
+        species: world.species,
+        unity: world.resources?.unity ?? null,
+        influence: world.resources?.influence ?? null,
+      }
     case 'economy':
       return { date: world.date, market: world.market, resources: resourceSummary(world.resources), capacity: { naval: world.status?.naval_capacity } }
     case 'diplomacy':
@@ -203,11 +211,32 @@ export function unitContext(unit, world) {
       }
     case 'fleet': {
       const detail = (world.fleetsDetail || []).find((row) => row.fleet_id === unit.key)
-      const system = detail?.summary?.system_id ? world.systems?.[String(detail.summary.system_id)] : null
+      const systemId = detail?.system_id ?? detail?.summary?.system_id ?? null
+      const system = Number.isFinite(Number(systemId)) ? world.systems?.[String(systemId)] : null
+      const galaxyRows = asArray(world.galaxyMap?.rows).slice(0, 80).map((row) => {
+        if (!Array.isArray(row)) return null
+        const [id, name, , , ownerId, , , flags] = row
+        const text = String(flags || '')
+        return {
+          system_id: Number(id),
+          name: name || null,
+          owner_id: ownerId ?? null,
+          flags: text || null,
+          surveyed: text.includes('S'),
+          colonized: text.includes('C'),
+          starbase: text.includes('B'),
+          fleet_present: text.includes('F'),
+          anomaly: text.includes('A'),
+          claimed: text.includes('K'),
+          megastructure: text.includes('M'),
+        }
+      }).filter(Boolean)
       return {
         date: world.date,
         fleet: detail || (world.fleetsAll || []).find((fleet) => fleet.fleet_id === unit.key) || null,
         system,
+        fleetSystems: world.fleetSystems || null,
+        nearbySystems: galaxyRows,
         fleets: (world.fleetsAll || []).map((fleet) => fleetSummary(fleet)),
         designs: asArray(world.designs?.designs || world.designs).slice(0, 20),
         contacts: asArray(world.contacts?.empires).map((empire) => ({ country_id: empire.country_id, name: empire.name })),
@@ -260,6 +289,9 @@ export function discoverUnits(world, unitsConfig = {}) {
   }
   if (unitsConfig.planets !== false) {
     for (const colony of world.colonies || []) {
+      if (colony.unreadable) continue
+      const colonyId = colony.colony_id ?? colony.details?.colony_id
+      if (colonyId !== undefined && colonyId !== null && !isValidColonyId(colonyId)) continue
       units.push({ id: `planet:${colony.planet_id}`, type: 'planet', key: colony.planet_id, name: colony.name || colony.details?.planet_name || `星球 ${colony.planet_id}` })
     }
   }

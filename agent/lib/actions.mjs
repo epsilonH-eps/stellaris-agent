@@ -24,7 +24,7 @@ export const UNIT_TYPES = {
     label: '国家内阁',
     actions: ['hire_leader', 'dismiss_leader', 'assign_leader', 'set_council_agenda', 'launch_council_agenda', 'select_leader_trait'],
   },
-  laws: { label: '法令与物种权利', actions: ['toggle_edict', 'set_species_rights'] },
+  laws: { label: '法令与物种权利', actions: ['toggle_edict', 'adopt_tradition', 'set_species_rights'] },
   economy: { label: '经济与市场', actions: ['market_trade', 'set_monthly_trade'] },
   diplomacy: {
     label: '外交与战争',
@@ -138,6 +138,12 @@ export const ACTIONS = [
     params: { edict_key: T.string, enabled: T.bool }, required: ['edict_key', 'enabled'],
     desc: '开关帝国法令（原生 CToggleEdictCommand）',
     verify: { read: 'get_edicts', includesParam: 'edict_key', soft: true },
+  },
+  {
+    method: 'adopt_tradition', unit: 'laws', confidence: 'verified',
+    params: { tradition_key: T.string }, required: ['tradition_key'],
+    desc: '采纳一项传统（key 见 get_traditions 的 available/unlocked）',
+    verify: { read: 'get_traditions', includesParam: 'tradition_key', soft: true },
   },
   {
     method: 'set_species_rights', unit: 'laws', confidence: 'verified',
@@ -447,6 +453,7 @@ export const READ_METHODS = [
   { method: 'get_government', scope: 'global' },
   { method: 'get_civics', scope: 'global' },
   { method: 'get_edicts', scope: 'global' },
+  { method: 'get_traditions', scope: 'global' },
   { method: 'get_traditions', scope: 'global' },
   { method: 'get_research_state', scope: 'global' },
   { method: 'get_leaders', scope: 'global' },

@@ -90,7 +90,7 @@
 # 需要 Node 22+
 .\run.cmd status           # 路径 / 桥 / 后端 / 插件
 .\run.cmd read             # 全量读取（不需要 Key，不写游戏）
-.\run.cmd actions          # 动作表（58 个写动作）
+.\run.cmd actions          # 动作表（59 个写动作）
 .\run.cmd events index     # 重建事件索引（原版+DLC+模组，不需要游戏）
 .\run.cmd serve            # 本地 HTTP + 面板（http://127.0.0.1:8787）
 .\run-gui.cmd              # 桌面窗口
@@ -222,7 +222,7 @@ agent/
     app.mjs                 应用装配（配置 + 编排器 + 插件）
     config.mjs              默认值 / 迁移 / 保存
     bridge.mjs              原生桥客户端（单连接、串行、自动重连）
-    actions.mjs             动作目录（58 写 / 43 读）
+    actions.mjs             动作目录（59 写 / 44 读）
     executor.mjs            串行执行器（阈值暂停、读回、Y 次重试）
     reader.mjs              全量读取
     mods.mjs                模组/DLC 清单
@@ -239,7 +239,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（105 项）
+test/                       node:test（109 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```
@@ -252,6 +252,8 @@ docs/                       ARCHITECTURE / API / ACTIONS / legacy
 - 原生桥单连接：程序内部已串行，**不要再开第二个客户端**；
 - 铁人档只读：程序会在状态里标出 `ironman`，执行器不额外拦截（原生侧也会拒绝）；
 - 动作表里标 `inferred` 的参数来自 DLL 符号推断，首次使用可能失败——失败会走"回报 → 分析 → 主会话决策"的闭环；
+- 少数存档的首都/特殊星球 `get_planet_details` 会返回 `colony_id=4294967295`，原生侧 `get_planet_jobs` 等接口也报 “Planet has no active colony”；程序会标记 `unreadable` 并**跳过该星球的子会话**（不再反复派发必败任务），等原生桥修好后自动恢复；
+- 舰队 `system_id` 缺失时，程序会用银河图 + `get_system` 反查一次（最多 80 个星系）；再找不到就不猜；
 - 主会话/子会话的质量取决于模型；程序只保证协议、边界与失败可见。
 
 ## License

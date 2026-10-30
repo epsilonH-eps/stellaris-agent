@@ -157,6 +157,30 @@ test('低于阈值不暂停', async () => {
   assert.equal(bridge.count('set_paused'), 0)
 })
 
+test('科研动作：slot 映射为桥接要求的 area 整数（0/1/2）', async () => {
+  const bridge = new FakeBridge({
+    select_research: () => ({ ok: true }),
+    cancel_research: () => ({ ok: true }),
+    get_research_state: () => ({
+      physics: { current: { key: null } },
+      society: { current: { key: 'tech_x' } },
+      engineering: { current: { key: null } },
+    }),
+  })
+  const executor = new Executor({ bridge, config: executorConfig() })
+  await executor.submit({
+    unit: 'research',
+    actions: [
+      { method: 'select_research', params: { slot: 'society', tech_key: 'tech_x' } },
+      { method: 'cancel_research', params: { slot: 'engineering' } },
+    ],
+  })
+  const select = bridge.calls.find((call) => call.method === 'select_research')
+  const cancel = bridge.calls.find((call) => call.method === 'cancel_research')
+  assert.deepEqual(select.params, { area: 1, tech_key: 'tech_x' })
+  assert.deepEqual(cancel.params, { area: 2 })
+})
+
 test('空动作 / 停止后的任务返回明确错误', async () => {
   const bridge = new FakeBridge({})
   const executor = new Executor({ bridge, config: executorConfig() })

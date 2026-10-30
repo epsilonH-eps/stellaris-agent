@@ -55,6 +55,32 @@ function researchWorld() {
 
 const unit = { id: 'research', type: 'research', name: '国家科研' }
 
+test('子会话：模型最后 blocked 时，失败报告仍保留上一次执行器结果', async () => {
+  const failed = {
+    ok: false,
+    summary: '0/1 成功；第 1 项 select_research 失败',
+    error: 'Technology key ... not found',
+    actions: [{ index: 0, method: 'select_research', status: 'failed', error: '-32044' }],
+  }
+  const backend = new ScriptedBackend([
+    '```json\n{"say":"试一下","actions":[{"method":"select_research","params":{"slot":"society","tech_key":"tech_x"}}]}\n```',
+    '```json\n{"say":"不行","actions":[],"status":"blocked","cause":"候选池不一致"}\n```',
+  ])
+  const executor = new FakeExecutor([failed])
+  const session = new UnitSession({
+    unit,
+    backend,
+    executor,
+    getWorld: researchWorld,
+    config,
+    onReport: () => {},
+  })
+  const report = await session.run({ goal: '测试' })
+  assert.equal(report.status, 'blocked')
+  assert.equal(report.result, failed)
+  assert.deepEqual(report.actions, ['select_research'])
+})
+
 test('子会话：非法动作被打回，下一轮换成合法动作成功', async () => {
   const backend = new ScriptedBackend([
     '```json\n{"say":"乱来","actions":[{"method":"nope","params":{}}]}\n```',

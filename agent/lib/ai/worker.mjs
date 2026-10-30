@@ -240,7 +240,8 @@ export class UnitSession {
             cause: decision.cause,
             suggestion: decision.suggestion,
             attempts: attempt,
-            actions: [],
+            actions: (lastResult?.actions || []).filter((row) => row.status === 'failed').map((row) => row.method),
+            result: lastResult,
             startedAt: started,
           })
         }

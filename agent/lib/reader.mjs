@@ -61,6 +61,11 @@ export function extractColonies(world) {
 }
 
 /** 从多种可能的返回结构里抽舰队列表（含民用）。 */
+export function isValidColonyId(value) {
+  const id = Number(value)
+  return Number.isFinite(id) && id >= 0 && id !== 4294967295
+}
+
 export function extractFleets(world) {
   const out = new Map()
   const push = (row, kind) => {
@@ -189,6 +194,7 @@ export class Reader {
       designCatalog: await this.safe('get_ship_design_catalog'),
       discoveries: await this.safe('get_discoveries'),
       colonies: [],
+      colonyIssues: [],
       fleetsDetail: [],
       systems: {},
       diplomacyOptions: [],
@@ -203,7 +209,9 @@ export class Reader {
       stats: null,
     }
 
-    world.colonies = extractColonies(world)
+    world.colonies = extractColonies(world).filter((colony) => colony.colony_id === undefined || isValidColonyId(colony.colony_id))
+    const overviewCapital = Number(world.galaxy?.player?.capital_system_id)
+    if (Number.isFinite(overviewCapital) && overviewCapital > 0) world.capitalSystemId = overviewCapital
     world.fleetsAll = extractFleets(world)
     const capitalPlanet = world.colonies[0]?.planet_id ?? status?.capital_planet_id ?? null
 
@@ -213,6 +221,14 @@ export class Reader {
       for (const colony of world.colonies) {
         const planetId = colony.planet_id
         const details = await this.safe('get_planet_details', { planet_id: planetId })
+        const colonyId = details?.colony_id ?? colony.colony_id
+        if (colonyId !== undefined && colonyId !== null && !isValidColonyId(colonyId)) {
+          this.log('reader.colony.invalid', { planetId, colonyId })
+          world.colonyIssues.push({ planet_id: planetId, colony_id: colonyId, reason: 'COLONY_LOOKUP_FAILED', system_id: details?.system_id ?? null })
+          // 保留在殖民地列表里（统计/首都仍正确），但标记为不可操作，避免反复派发必败的建造任务
+          colonyRows.push({ ...colony, details, unreadable: true, readError: 'COLONY_LOOKUP_FAILED' })
+          continue
+        }
         colonyRows.push({
           ...colony,
           details,
@@ -235,12 +251,51 @@ export class Reader {
 
     // ---- 舰队明细
     if (deep) {
-      for (const fleet of world.fleetsAll) {
-        const detail = await this.safe('get_fleets', { fleet_id: fleet.fleet_id })
-        world.fleetsDetail.push({ fleet_id: fleet.fleet_id, kind: fleet.kind, summary: fleet, detail })
-        const systemId = fleet.system_id ?? fleet.location?.system_id ?? detail?.system_id
-        if (Number.isFinite(Number(systemId))) await this.ensureSystem(world, Number(systemId))
+      const rawRows = [
+        ...asArray(world.fleets?.fleets),
+        ...asArray(world.militaryFleets?.fleets),
+        ...asArray(world.civilianFleets?.science_ships),
+        ...asArray(world.civilianFleets?.construction_ships),
+        ...asArray(world.civilianFleets?.colony_ships),
+        ...asArray(world.civilianFleets?.transport_fleets),
+      ]
+      const byId = new Map()
+      for (const row of rawRows) {
+        const id = Number(row?.fleet_id ?? row?.fleetId ?? row?.id)
+        if (!Number.isFinite(id)) continue
+        const previous = byId.get(id)
+        byId.set(id, previous ? { ...previous, ...row, system_id: row.system_id ?? previous.system_id } : row)
       }
+      const num = (...values) => {
+        for (const value of values) {
+          const parsed = Number(value)
+          if (Number.isFinite(parsed) && parsed >= 0) return parsed
+        }
+        return null
+      }
+      for (const fleet of world.fleetsAll) {
+        const raw = byId.get(Number(fleet.fleet_id)) || null
+        const systemId = num(
+          raw?.system_id,
+          raw?.systemId,
+          raw?.center_system_id,
+          raw?.location?.system_id,
+          raw?.system?.id,
+          fleet.system_id,
+          fleet.center_system_id,
+        )
+        if (systemId !== null) fleet.system_id = systemId
+        world.fleetsDetail.push({
+          fleet_id: fleet.fleet_id,
+          kind: fleet.kind,
+          summary: { ...fleet, system_id: systemId ?? fleet.system_id ?? null },
+          detail: raw,
+          system_id: systemId ?? null,
+        })
+        if (systemId !== null) await this.ensureSystem(world, systemId)
+      }
+
+      world.fleetSystems = Object.fromEntries(world.fleetsAll.map((fleet) => [fleet.fleet_id, fleet.system_id ?? null]))
     }
 
     // ---- 外交选项 / 战争目标
@@ -285,6 +340,8 @@ export class Reader {
         }
       }
     }
+
+    if (deep) await this.resolveFleetSystems(world)
 
     // ---- 模组
     world.mods = listMods({ userDir: paths.userDir || '', installDir: paths.installDir || '' })
@@ -340,6 +397,54 @@ export class Reader {
     const detail = await this.safe('get_system', { system_id: Number(systemId) })
     world.systems[key] = detail
     return detail
+  }
+
+  /**
+   * 舰队的 system_id 读取不到时，用银河图 + get_system 反查一次（最多 80 个星系）。
+   * 必须在 galaxyMap 建好之后调用。
+   */
+  async resolveFleetSystems(world) {
+    const unresolved = (world.fleetsAll || []).filter((fleet) => !Number.isFinite(Number(fleet.system_id)))
+    if (!unresolved.length || !Array.isArray(world.galaxyMap?.rows)) {
+      world.fleetSystems = Object.fromEntries((world.fleetsAll || []).map((fleet) => [fleet.fleet_id, fleet.system_id ?? null]))
+      return
+    }
+    const num = (...values) => {
+      for (const value of values) {
+        const parsed = Number(value)
+        if (Number.isFinite(parsed) && parsed >= 0) return parsed
+      }
+      return null
+    }
+    const wanted = new Set(unresolved.map((fleet) => Number(fleet.fleet_id)))
+    const found = new Map()
+    for (const row of world.galaxyMap.rows.slice(0, 80)) {
+      if (found.size === wanted.size) break
+      const systemId = num(Array.isArray(row) ? row[0] : row?.system_id)
+      if (systemId === null) continue
+      const detail = await this.ensureSystem(world, systemId)
+      const rows = [
+        ...asArray(detail?.fleets),
+        ...asArray(detail?.owned_fleets),
+        ...asArray(detail?.fleet_ids).map((value) => ({ fleet_id: value })),
+      ]
+      for (const item of rows) {
+        const id = num(item?.fleet_id ?? item?.id ?? item)
+        if (id !== null && wanted.has(id)) found.set(id, systemId)
+      }
+    }
+    for (const fleet of unresolved) {
+      const systemId = found.get(Number(fleet.fleet_id))
+      if (systemId === undefined) continue
+      fleet.system_id = systemId
+      const row = world.fleetsDetail.find((detail) => Number(detail.fleet_id) === Number(fleet.fleet_id))
+      if (row) {
+        row.system_id = systemId
+        row.summary = { ...row.summary, system_id: systemId }
+      }
+      this.log('reader.fleet.location', { fleetId: fleet.fleet_id, systemId })
+    }
+    world.fleetSystems = Object.fromEntries((world.fleetsAll || []).map((fleet) => [fleet.fleet_id, fleet.system_id ?? null]))
   }
 
   status() {
