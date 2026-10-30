@@ -60,14 +60,34 @@ function fakeCtx() {
       },
     },
     subagents: {
-      async startActivation() {
+      async startActivation({ request } = {}) {
+        const prompt = String(request?.prompt?.[0]?.text || '')
+        const text = request?.parent && request.parent === ctx.agent ? `主会话说：${prompt}` : '```json\n{"ok":true}\n```'
         return {
-          result: Promise.resolve({ output: [{ type: 'text', text: '```json\n{"ok":true}\n```' }], usage: { total_tokens: 3 } }),
+          result: Promise.resolve({ output: [{ type: 'text', text }], usage: { total_tokens: 3 } }),
           async dispose() {},
         }
       },
     },
-    agents: { currentInitiator: () => ({ id: 'owner' }) },
+    agents: {
+      currentInitiator: () => ({ id: 'owner' }),
+      async create({ sessionId }) {
+        ctx.createdSessionId = sessionId
+        ctx.createCount = (ctx.createCount || 0) + 1
+        const messages = []
+        const agent = {
+          session: { deriveMessages: () => messages.slice() },
+          followup({ content }) {
+            messages.push({ role: 'user', content })
+            messages.push({ role: 'assistant', content: [{ type: 'text', text: `主会话说：${content?.[0]?.text || ''}` }] })
+          },
+          async whenIdle() {},
+          cancel() {},
+        }
+        ctx.agent = agent
+        return { agent, async dispose() {} }
+      },
+    },
     effect(fn) {
       const disposer = fn()
       ctx.effects.push(disposer)
@@ -128,6 +148,34 @@ test('固定端口：health / version / run 全链路（不依赖 DSH Web 端口
   const reload = await fetch(`${BASE}/reload`, { method: 'POST' }).then((response) => response.json())
   assert.equal(reload.ok, true)
   assert.equal(reload.port, PORT)
+})
+
+test('主会话：label=main 新建一个 DSH session 并复用', async () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+  const first = await call(ctx.routes.handler, {
+    method: 'POST',
+    url: '/api/stellaris-orchestrator/run',
+    body: { prompt: '第一轮', label: 'main' },
+  })
+  assert.equal(first.status, 200)
+  assert.equal(first.body.ok, true)
+  assert.equal(first.body.session, true)
+  assert.match(first.body.text, /主会话说：第一轮/)
+  assert.ok(first.body.sessionId)
+  assert.equal(ctx.createCount, 1)
+
+  const second = await call(ctx.routes.handler, {
+    method: 'POST',
+    url: '/api/stellaris-orchestrator/run',
+    body: { prompt: '第二轮', label: 'main' },
+  })
+  assert.equal(second.body.sessionId, first.body.sessionId, '同一个主会话应复用 DSH session')
+  assert.equal(ctx.createCount, 1, '不应重复创建 session')
+
+  const health = await call(ctx.routes.handler, { method: 'GET', url: '/api/stellaris-orchestrator/health' })
+  assert.equal(health.body.mainSessionReady, true)
+  assert.equal(health.body.mainSessionId, first.body.sessionId)
 })
 
 test('DSH 路由兼容：health / run / reload 仍然可用', async () => {

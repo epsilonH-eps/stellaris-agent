@@ -134,6 +134,10 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/execute `
 | POST | `/api/orchestrator/restart` | 重启（设置变更后用） |
 | POST | `/api/orchestrator/objective` | `{objective}` 更新战略目标 |
 
+> DSH 后端：主会话请求（`label=main`）会在 DSH 里新建并复用一条
+> `stellaris-main-<uuid>` 会话；`/api/stellaris-orchestrator/health` 会返回
+> `mainSessionId` / `mainSessionReady`，子会话仍是独立激活。
+
 ---
 
 ## 主会话直连（同步对话）

@@ -124,6 +124,7 @@ DSH 插件（`dsh-stellaris-bridge`）是**固定端口 + 稳定 shim + 热重�
 - 同时保留 DSH Web 的 `/api/stellaris-orchestrator/*` 路由做兼容，旧配置仍能用；
 - `index.js` 只做路由与转发，几乎不再变；
 - 真正逻辑在 `lib/handler.mjs`，按 mtime 动态 import；
+- **主会话专用 session**：`label=main` 的请求第一次到达时，插件会通过 `ctx.agents.create()` 在 DSH 里新建一条 `stellaris-main-<uuid>` 会话，后续主会话调用都挂在这条会话下；子会话仍是各自独立的 spawn 激活；
 - `POST /api/stellaris-orchestrator/reload` 即可热更新，**不用重启 DSH**；
 - 程序每次启动都会"安装/更新插件 + 尝试热重载"；只有 shim 本身变了才需要重启 DSH（可选配置 `dshPlugin.restartCommand` 或在设置页手动点"重启 DSH"，默认不杀你的会话）。
 
@@ -239,7 +240,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（109 项）
+test/                       node:test（110 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```
