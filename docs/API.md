@@ -174,6 +174,60 @@ POST /api/main/ask
 
 ---
 
+## 失败报告（子会话失败原因）
+
+任何单位/事件子会话最终失败（`blocked` / `error`）时，编排器会自动导出两份文件到
+`%USERPROFILE%\.stellaris-agent\failures\`：
+
+- `<时间>-<单位>-<状态>.json`：完整现场（执行器逐次尝试、错误码、读回、会话、世界摘要）；
+- `<时间>-<单位>-<状态>.md`：人读版（原因/建议/证据 + 失败动作表 + 最近对话）；
+- `latest.json` / `latest.md`：最近一次，方便直接打开。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/failures?limit=50` | 失败报告列表（按时间倒序） |
+| GET | `/api/failures/<id>` | 单份失败报告 JSON |
+| GET | `/api/failures/<id>/markdown` | 单份失败报告 Markdown（`text/markdown`） |
+
+`GET /api/failures`：
+
+```json
+{
+  "ok": true,
+  "dir": "C:\\Users\\heyik\\.stellaris-agent\\failures",
+  "failures": [
+    {
+      "id": "20261030-232556-090-research-blocked",
+      "at": "2026-10-30T15:25:56.090Z",
+      "unit": "research",
+      "unitType": "research",
+      "status": "blocked",
+      "cause": "select_research 返回 UNKNOWN_TECH",
+      "attempts": 2,
+      "file": "...\\20261030-232556-090-research-blocked.json",
+      "markdownFile": "...\\20261030-232556-090-research-blocked.md"
+    }
+  ]
+}
+```
+
+会话详情里的 `lastReport.exported` 也会带上同一份报告的 id / 文件路径。
+
+配置（`config.json`）：
+
+```json
+{
+  "failures": {
+    "dir": "",
+    "maxFiles": 200,
+    "includeTranscript": true,
+    "includeWorld": false
+  }
+}
+```
+
+---
+
 ## 会话（界面用）
 
 | 方法 | 路径 | 说明 |

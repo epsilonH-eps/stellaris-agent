@@ -29,6 +29,7 @@ import { resolveUserDir } from '../../engine/lib/paths.js'
 import { resolveInstallDir } from '../../engine/lib/steam.js'
 import { resolveSaveDir } from './save.mjs'
 import { agentHome } from './config.mjs'
+import { FailureStore } from './failures.mjs'
 
 export class OrchestratorError extends Error {
   constructor(message, { code = 'ORCHESTRATOR_ERROR', detail = null } = {}) {
@@ -82,6 +83,7 @@ export class Orchestrator {
     this.backendInfo = null
     this.main = null
     this.journal = null
+    this.failures = new FailureStore({ home: this.home, config: this.config, log: this.log })
     this.units = new Map()
     this.eventSessions = new Map()
     this.recentEvents = []
@@ -273,7 +275,7 @@ export class Orchestrator {
         getWorld: () => this.world?.current || null,
         config: this.config,
         log: this.log,
-        onReport: (report) => this.onUnitReport(report),
+        onReport: (report) => this.onUnitReport(report, session),
       })
       this.units.set(descriptor.id, session)
     }
@@ -299,16 +301,34 @@ export class Orchestrator {
       return { ok: false, status: 'cooldown', unit: unitId }
     }
     this.stats.unitRuns += 1
+    const startedAt = Date.now()
     try {
       return await session.run({ goal, reason })
     } catch (error) {
       this.stats.failures += 1
-      this.log('orchestrator.dispatch.failed', { unit: unitId, error: String(error?.message || error) })
-      return { ok: false, status: 'error', unit: unitId, error: String(error?.message || error) }
+      const detail = String(error?.message || error)
+      this.log('orchestrator.dispatch.failed', { unit: unitId, error: detail })
+      const report = {
+        unit: unitId,
+        unitType: session.unit?.type || null,
+        name: session.unit?.name || null,
+        status: 'error',
+        say: '子会话运行异常',
+        cause: detail,
+        suggestion: '',
+        attempts: 0,
+        actions: [],
+        result: null,
+        goal: goal || session.goal || '',
+        at: Date.now(),
+        ms: Date.now() - startedAt,
+      }
+      this.onUnitReport(report, session)
+      return { ok: false, ...report, error: detail }
     }
   }
 
-  onUnitReport(report) {
+  onUnitReport(report, session = null) {
     this.journal?.append({
       kind: 'unit.report',
       unit: report.unit,
@@ -317,6 +337,22 @@ export class Orchestrator {
     })
     this.main?.observeReport(report)
     if (report.status !== 'ok') {
+      // 失败的子会话：把完整现场落盘（json + markdown），并让主会话/界面知道
+      try {
+        const exported = this.failures.record(report, { session, world: this.world?.current, source: report.source || 'unit' })
+        if (exported) {
+          report.exported = exported
+          this.chat?.outbound({
+            text: `[${report.unit}] 失败原因已导出：${exported.file}`,
+            id: 'system',
+            kind: 'failure-export',
+            meta: { failureId: exported.id, markdown: exported.markdownFile },
+          })
+          this.log('orchestrator.failure.exported', { unit: report.unit, id: exported.id, file: exported.file })
+        }
+      } catch (error) {
+        this.log('orchestrator.failure.export.failed', { unit: report.unit, error: String(error?.message || error) })
+      }
       this.chat?.outbound({
         text: `[${report.unit}] ${report.say || '执行受阻'}${report.cause ? `｜原因：${report.cause}` : ''}${report.suggestion ? `｜建议：${report.suggestion}` : ''}`,
         id: 'unit',
@@ -419,7 +455,7 @@ export class Orchestrator {
       getWorld: () => this.world?.current || null,
       config: this.config,
       log: this.log,
-      onReport: (report) => this.onUnitReport(report),
+      onReport: (report) => this.onUnitReport(report, session),
     })
     this.eventSessions.set(unitId, session)
     this.stats.eventRuns += 1
@@ -442,8 +478,25 @@ export class Orchestrator {
         await this.executor.resume('event-failed').catch(() => {})
       }
       this.stats.failures += 1
-      this.log('orchestrator.event.failed', { unit: unitId, error: String(error?.message || error) })
-      return null
+      const detail = String(error?.message || error)
+      this.log('orchestrator.event.failed', { unit: unitId, error: detail })
+      const report = {
+        unit: unitId,
+        unitType: 'event',
+        name: unit.name,
+        status: 'error',
+        say: '特殊事件处理异常',
+        cause: detail,
+        suggestion: '',
+        attempts: 0,
+        actions: [],
+        result: null,
+        goal: unit.event?.goal || '',
+        at: Date.now(),
+        ms: 0,
+      }
+      this.onUnitReport(report, session)
+      return report
     } finally {
       this.recentEvents.push({ id: unitId, at: Date.now(), summary: session.summary(), snapshot: session.snapshot({ maxMessages: 120, maxChars: 10000 }) })
       if (this.recentEvents.length > 12) this.recentEvents.shift()
@@ -578,6 +631,10 @@ export class Orchestrator {
           }
         : null,
       stats: this.stats,
+      failures: {
+        dir: this.failures.dir,
+        last: this.failures.list({ limit: 1 })[0] || null,
+      },
       lastError: this.lastError,
     }
   }

@@ -252,6 +252,40 @@ Invoke-RestMethod http://127.0.0.1:8787/api/main
 - 单动作最多 Y 次；仍失败则任务在该步终止，后续动作标记 `skipped`；
 - 动作表里标 `*` 的参数是推断值，首次失败会回报给子会话改参重试。
 
+### 失败原因自动导出
+
+子会话最终失败（重试用完仍 `blocked`，或运行异常 `error`）时，会**自动**在
+`%USERPROFILE%\.stellaris-agent\failures\` 下生成：
+
+```
+20261030-232556-090-research-blocked.json   完整现场
+20261030-232556-090-research-blocked.md     人读版
+latest.json / latest.md                     最近一次
+```
+
+内容包括：单位/目标/状态/尝试次数、模型给出的原因/建议/证据、执行器每一步的错误码与逐次尝试、
+读回结果、该会话最近对话、可选的世界摘要。
+
+查看方式：
+
+- GUI「子会话」页右上角「失败报告」按钮，直接打开 failures 目录；摘要里也会显示本次报告路径；
+- `GET /api/failures`、`GET /api/failures/<id>`、`GET /api/failures/<id>/markdown`；
+- 命令行：
+
+```powershell
+.\run.cmd failures                 # 最近 20 份
+.\run.cmd failure latest           # 最近一份 JSON
+.\run.cmd failure latest --markdown
+```
+
+配置项（`config.json`）：
+
+```json
+{ "failures": { "dir": "", "maxFiles": 200, "includeTranscript": true, "includeWorld": false } }
+```
+
+`maxFiles` 会按时间自动清理旧报告；`includeWorld` 默认关闭以控制体积。
+
 ---
 
 ## 9. 命令行速查
@@ -270,6 +304,8 @@ Invoke-RestMethod http://127.0.0.1:8787/api/main
 .\run.cmd connect [--start] [--watch]
 .\run.cmd sessions               # 会话列表
 .\run.cmd session main           # 某个会话的完整对话
+.\run.cmd failures               # 最近失败的子会话报告
+.\run.cmd failure latest         # 看一份失败报告（--markdown 看人读版）
 .\run.cmd execute '<json>'
 .\run.cmd call get_status        # 原始 RPC（排障）
 .\run.cmd pause | resume
@@ -292,6 +328,7 @@ Invoke-RestMethod http://127.0.0.1:8787/api/main
 | 事件索引缓存 | 同目录 `event-index.json` |
 | DSH 端口缓存 | 同目录 `dsh-url.json` |
 | 决策/上报日志 | 同目录 `journal\YYYY-MM-DD.jsonl` |
+| 失败报告 | 同目录 `failures\*.json` / `*.md`（`latest.md` 最近一份） |
 | 诊断包 | 设置页「导出诊断」→ `diagnostics-*.json` |
 
 ---

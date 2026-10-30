@@ -7,6 +7,7 @@
 import { agentHome, configFile, loadConfig, saveConfig, mergeConfig, backendOf } from './config.mjs'
 import { Orchestrator, resolvePaths } from './orchestrator.mjs'
 import { installPlugin, reloadDsh, updateAndReloadPlugin, pluginVersions } from './dsh-plugin.mjs'
+import { FailureStore } from './failures.mjs'
 import { discoverDsh } from './ai/dsh.mjs'
 import { createBackend } from './ai/backend.mjs'
 import { ensureBridge, findGameProcess, getSharedBridge } from './bridge.mjs'
@@ -55,6 +56,11 @@ export class App {
     this._probeBackend = null
     if (loaded.created) this.log('app.config.created', { file: loaded.file })
     return loaded
+  }
+
+  /** 编排器没启动时，失败报告列表也要能读（直接扫 failures 目录）。 */
+  failureStore() {
+    return this.orchestrator?.failures || new FailureStore({ home: this.home, config: this.config, log: this.log })
   }
 
   /** 编排器没启动时，readiness 也要复用同一个后端实例（DSH 端口发现要缓存） */

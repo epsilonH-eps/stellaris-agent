@@ -350,8 +350,9 @@ $subSelect.DropDownStyle = 'DropDownList'
 $subSelect.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
 $subTop.Controls.Add($subSelect)
 $subRefreshBtn = New-Button $subTop '刷新' 644 70 10
+$subFailBtn = New-Button $subTop '失败报告' 724 88 10
 $subMeta = New-Object System.Windows.Forms.Label
-$subMeta.SetBounds(724, 13, 460, 22)
+$subMeta.SetBounds(820, 13, 360, 22)
 $subMeta.ForeColor = [System.Drawing.Color]::Gray
 $subTop.Controls.Add($subMeta)
 
@@ -585,6 +586,7 @@ function Format-Session($s) {
     if ($s.lastReport.cause) { [void]$sb.AppendLine("失败原因：$($s.lastReport.cause)") }
     if ($s.lastReport.suggestion) { [void]$sb.AppendLine("建议：$($s.lastReport.suggestion)") }
     if ($null -ne $s.lastReport.attempts) { [void]$sb.AppendLine("尝试次数：$($s.lastReport.attempts)") }
+    if ($s.lastReport.exported) { [void]$sb.AppendLine("失败报告：$($s.lastReport.exported.file)") }
   }
   if ($s.lastDecision) { [void]$sb.AppendLine("上次决策：$(Val $s.lastDecision.say '(无)')") }
   if ($s.lastError) { [void]$sb.AppendLine("错误：$(Val $s.lastError)") }
@@ -803,6 +805,14 @@ $connectBtn.Add_Click({
     Update-Readiness
     if (-not $r.ok) { [System.Windows.Forms.MessageBox]::Show((Val $r.error '连接失败') + "`r`n" + (Val $r.detail ''), '连接群星') | Out-Null }
   } catch { Show-Error '连接失败' $_ }
+})
+
+$subFailBtn.Add_Click({
+  try {
+    $dir = Join-Path $agentHome 'failures'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+    Start-Process explorer.exe $dir
+  } catch { Show-Error '打开失败报告目录失败' $_ }
 })
 
 $chatSend.Add_Click({

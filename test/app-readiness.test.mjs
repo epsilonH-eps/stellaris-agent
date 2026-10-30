@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { App } from '../agent/lib/app.mjs'
 import { DEFAULT_CONFIG } from '../agent/lib/config.mjs'
+import { resetSharedBridge } from '../agent/lib/bridge.mjs'
 
 function withTempHome(run) {
   const home = mkdtempSync(join(tmpdir(), 'stellaris-app-'))
@@ -15,12 +16,16 @@ function withTempHome(run) {
   config.ai.deepseek.apiKey = ''
   config.bridge.autoInject = false
   config.bridge.autoStartOrchestrator = false
+  // 不要连到真游戏的命名管道（否则测试进程会一直持有 socket）
+  config.bridge.pipeName = `stellaris_mcp_test_${process.pid}_${Date.now()}`
   writeFileSync(join(home, 'config.json'), JSON.stringify(config, null, 2), 'utf8')
+  resetSharedBridge()
   return Promise.resolve()
     .then(() => run(home))
     .finally(() => {
       if (previous === undefined) delete process.env.STELLARIS_AGENT_HOME
       else process.env.STELLARIS_AGENT_HOME = previous
+      resetSharedBridge()
       rmSync(home, { recursive: true, force: true })
     })
 }

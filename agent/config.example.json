@@ -99,6 +99,12 @@
   "journal": {
     "enabled": true
   },
+  "failures": {
+    "dir": "",
+    "maxFiles": 200,
+    "includeTranscript": true,
+    "includeWorld": false
+  },
   "log": {
     "level": "info",
     "file": true

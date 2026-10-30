@@ -126,6 +126,7 @@ export class UnitSession {
       windowId: this.unit.windowId ?? null,
       eventId: this.unit.eventId ?? null,
       error: this.lastReport?.status === 'ok' ? null : this.lastReport?.cause || null,
+      exported: this.lastReport?.exported || null,
     }
   }
 
@@ -157,6 +158,7 @@ export class UnitSession {
             actions: report.actions,
             at: report.at,
             ms: report.ms,
+            exported: report.exported || null,
           }
         : null,
       lastResult: report?.result

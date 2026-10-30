@@ -33,6 +33,7 @@ import { checkBackend, createBackend } from './ai/backend.mjs'
 import { describeActions, validateActions } from './actions.mjs'
 import { discoverUnits } from './context.mjs'
 import { installPlugin, pluginVersions, reloadDsh } from './dsh-plugin.mjs'
+import { FailureStore } from './failures.mjs'
 import { createLogger } from './logger.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -52,6 +53,8 @@ const HELP = `群星参谋 v2
   stellaris-agent connect                立即连接（必要时注入）并按配置接管
   stellaris-agent sessions               会话列表（主会话 + 子会话）
   stellaris-agent session <id>           某个会话的完整对话
+  stellaris-agent failures [--limit 20]  最近失败的子会话报告
+  stellaris-agent failure <id> [--markdown]  看一份失败报告（默认 latest）
   stellaris-agent ask "问题"             直接和主会话智能体对话（同步返回）
   stellaris-agent execute '<json>' [--unit x]  执行动作
   stellaris-agent call <method> [json]   原始 RPC
@@ -304,6 +307,32 @@ export async function run(argv) {
           out(`[${who}]`)
           out(message.content)
         }
+        return 0
+      }
+      case 'failures': {
+        const store = new FailureStore({ home: app.home, config: app.config, log: app.log })
+        const rows = store.list({ limit: Number(flags.limit) || 20 })
+        out(pretty({ dir: store.dir, failures: rows }))
+        return 0
+      }
+      case 'failure': {
+        const store = new FailureStore({ home: app.home, config: app.config, log: app.log })
+        const id = positional[0] || 'latest'
+        if (flags.markdown) {
+          const text = store.readMarkdown(id)
+          if (!text) {
+            out(`未找到失败报告：${id}（目录 ${store.dir}）`)
+            return 1
+          }
+          out(text)
+          return 0
+        }
+        const failure = store.read(id)
+        if (!failure) {
+          out(`未找到失败报告：${id}（目录 ${store.dir}）`)
+          return 1
+        }
+        out(pretty(failure))
         return 0
       }
       case 'ask': {

@@ -188,6 +188,29 @@ export function startServer({ app, log = () => {} }) {
         return json(res, 200, { ok: true, ...(await app.connect({ start: body?.start })) })
       }
 
+      // ---------------------------------------------------------------- 失败报告
+      if (method === 'GET' && path === '/api/failures') {
+        const store = app.failureStore()
+        const limit = Number(url.searchParams.get('limit')) || 50
+        return json(res, 200, { ok: true, dir: store.dir, failures: store.list({ limit }) })
+      }
+      if (method === 'GET' && path.startsWith('/api/failures/')) {
+        const rest = path.slice('/api/failures/'.length)
+        const slash = rest.indexOf('/')
+        const id = decodeURIComponent(slash >= 0 ? rest.slice(0, slash) : rest)
+        const suffix = slash >= 0 ? rest.slice(slash + 1) : ''
+        const store = app.failureStore()
+        if (suffix === 'markdown') {
+          const text = store.readMarkdown(id)
+          if (!text) return fail(res, 404, 'FAILURE_NOT_FOUND', id)
+          res.writeHead(200, { 'content-type': 'text/markdown; charset=utf-8', 'cache-control': 'no-store' })
+          return res.end(text)
+        }
+        const failure = store.read(id)
+        if (!failure) return fail(res, 404, 'FAILURE_NOT_FOUND', id)
+        return json(res, 200, { ok: true, failure })
+      }
+
       // ---------------------------------------------------------------- 会话
       if (method === 'GET' && path === '/api/sessions') {
         const orchestrator = app.orchestrator

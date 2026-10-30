@@ -37,6 +37,7 @@
 - **底部常驻**：`大模型: 已连接 / 未连接（原因）` 与 `游戏: 已连接 2200.01.01 / 未连接（原因）`，颜色区分，悬停看详情；
 - **「主会话」页**：主会话的状态摘要 + 完整对话（它在看什么、决定了什么、派发了谁）；
 - **「子会话」页**：顶部下拉框选择单位或特殊事件，下面展示该会话的摘要 + 完整对话；
+- **失败可见**：子会话最终失败会自动导出 JSON + Markdown（原因/建议/逐次尝试/会话现场）到 `~/.stellaris-agent/failures`，界面、HTTP 接口、CLI 都能查；
 - **自动连接**：程序启动后由看护循环负责——游戏在跑就注入原生桥，进局就自动接管；游戏重启后自动续上。
 
 ### 启动时读什么（全量）
@@ -236,7 +237,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（86 项）
+test/                       node:test（92 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```

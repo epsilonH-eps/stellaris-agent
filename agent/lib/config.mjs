@@ -96,6 +96,12 @@ export const DEFAULT_CONFIG = {
   chat: { enabled: true, port: 8787, token: '', maxHistory: 500 },
   dshPlugin: { autoInstall: true, autoReload: false, profileDir: '', restartCommand: '' },
   journal: { enabled: true },
+  failures: {
+    dir: '', // 留空 = <home>/failures
+    maxFiles: 200,
+    includeTranscript: true,
+    includeWorld: false,
+  },
   log: { level: 'info', file: true },
 }
 

@@ -299,6 +299,22 @@ orchestrator.sessionDetail(id)   -> snapshot（main / 单位 id / event:<windowI
 
 HTTP：`GET /api/sessions` 与 `GET /api/sessions/<id>`（见 [API.md](API.md)）。
 
+### 失败报告导出
+
+`orchestrator.onUnitReport(report, session)` 在 `report.status !== 'ok'` 时调用
+`FailureStore.record()`，把失败现场写到 `<home>/failures/`：
+
+- `<时间>-<单位>-<状态>.json`：完整结构（执行器逐行状态/错误码/逐次尝试/读回、会话消息、世界摘要、模型结论）；
+- `<时间>-<单位>-<状态>.md`：人读版；
+- `latest.json` / `latest.md`：最近一次；
+- 超过 `failures.maxFiles` 按时间清理；`includeTranscript` / `includeWorld` 控制体积；
+- 不写 API Key / token / 完整配置；
+- 导出成功后把 `{id,file,markdownFile}` 挂到 `report.exported`，会话快照和聊天出站都能看到；
+- 运行异常（`dispatch` / 事件会话抛错）也会合成一条 `status=error` 报告再导出。
+
+HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown`；
+界面「子会话」页右上角「失败报告」直接打开目录；CLI `failures` / `failure <id>`。
+
 ### 自动连接（看护循环）
 
 `App.startWatcher()` 每 `bridge.watchSeconds` 检查一次：
@@ -322,15 +338,15 @@ HTTP：`GET /api/sessions` 与 `GET /api/sessions/<id>`（见 [API.md](API.md)�
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 86 项 node:test
+npm test                      # 92 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径
 ```
 
 测试覆盖：动作表一致性、执行器（串行/重试/读回/阈值暂停）、协议解析、聊天游标、读取容错、
-世界差分、子会话重试与失败分析、模组启用判定、事件图（原版+模组+后续+缓存）、插件安装幂等、
-配置迁移、App readiness/看护循环。
+世界差分、子会话重试与失败分析、失败报告导出/清理、模组启用判定、事件图（原版+模组+后续+缓存）、
+插件安装幂等、配置迁移、App readiness/看护循环。
 
 ### 没有游戏时怎么跑全链路
 

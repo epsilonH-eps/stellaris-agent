@@ -10,13 +10,20 @@
 import { createServer } from 'node:http'
 
 const port = Number(process.argv[2] || 9911)
+const failUnit = process.env.MOCK_UNIT_FAIL === '1'
 
 function decide(system, userText) {
   if (/特殊事件处理会话/.test(system)) {
     return { say: '处理测试事件', actions: [{ method: 'resolve_event', params: { window_id: 5, option_index: 0 } }], status: 'continue' }
   }
   if (/1:1 操作员子会话/.test(system)) {
+    if (/失败分析/.test(userText)) {
+      return { cause: '测试失败：动作校验不通过', evidence: '模型给了不存在的动作名', suggestion: '检查 tech_key / 动作名后重试' }
+    }
     if (/执行器结果：成功/.test(userText)) return { say: '已按计划完成', actions: [], status: 'ok' }
+    if (failUnit) {
+      return { say: '故意失败', actions: [{ method: 'definitely_not_an_action', params: {} }], status: 'continue' }
+    }
     return { say: '切换物理研究', actions: [{ method: 'select_research', params: { slot: 'physics', tech_key: 'tech_lasers_1' } }], status: 'continue' }
   }
   if (/总指挥/.test(system)) {
