@@ -586,6 +586,25 @@ function Update-Health {
   }
 }
 
+
+function Get-ApiFailure($err) {
+  $detail = $err.ErrorDetails.Message
+  if ($detail) {
+    try {
+      $obj = $detail | ConvertFrom-Json
+      if ($obj.error) { $detail = [string]$obj.error }
+      elseif ($obj.message) { $detail = [string]$obj.message }
+    } catch { }
+  } else { $detail = $err.Exception.Message }
+  switch ($detail) {
+    'GAME_NOT_RUNNING' { return '群星没有运行。先启动游戏并读档/新开一局，再点「连接群星」。' }
+    'INJECT_FAILED' { return '原生桥注入失败：确认游戏是 4.5.2、程序与游戏权限一致、杀软未拦截。' }
+    'PIPE_NOT_READY' { return '注入成功但管道没起来；完全重启游戏后再试。' }
+    'DLL_NOT_FOUND' { return '找不到 stellaris_bridge.dll，检查 agent/native 目录。' }
+    default { return [string]$detail }
+  }
+}
+
 $connectGameBtn.Add_Click({
   try {
     $r = Invoke-RestMethod -Uri "$base/api/native/connect" -Method Post -Headers $headers -TimeoutSec 30
@@ -594,7 +613,7 @@ $connectGameBtn.Add_Click({
     }
     Update-Health
   } catch {
-    [System.Windows.Forms.MessageBox]::Show("连接群星失败：$($_.Exception.Message)", '群星参谋') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("连接群星失败：$((Get-ApiFailure $_))", '群星参谋') | Out-Null
   }
 })
 
@@ -605,7 +624,7 @@ $startAiBtn.Add_Click({
     if ($swarmBox) { $swarmBox.Text = ($r | ConvertTo-Json -Depth 8) }
     Update-Health
   } catch {
-    [System.Windows.Forms.MessageBox]::Show("启动 AI 失败：$($_.Exception.Message)", '群星参谋') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("启动 AI 失败：$((Get-ApiFailure $_))", '群星参谋') | Out-Null
   }
 })
 $stopAiBtn.Add_Click({
