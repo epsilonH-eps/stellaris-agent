@@ -250,7 +250,9 @@ $script:dshUrl = $choice.dshUrl
 $server = $null
 function Start-Backend {
   $bin = Join-Path $root 'bin\stellaris-agent.mjs'
-  $script:server = Start-Process -FilePath $node -ArgumentList @($bin, 'serve', '--port', "$Port") -WindowStyle Hidden -PassThru
+  $logDir = Join-Path $agentHome 'logs'
+    New-Item -ItemType Directory -Force $logDir | Out-Null
+    $script:server = Start-Process -FilePath $node -ArgumentList @($bin, 'serve', '--port', "$Port") -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $logDir 'backend.out.log') -RedirectStandardError (Join-Path $logDir 'backend.err.log')
   $deadline = (Get-Date).AddSeconds(25)
   while ((Get-Date) -lt $deadline) {
     try {
@@ -549,6 +551,10 @@ $settingsPanel.Controls.Add($settingsDshDetect)
 $settingsSave = New-Object System.Windows.Forms.Button
 $settingsSave.Text = '保存设置并重启后端'
 $settingsSave.SetBounds(150, 140, 180, 30)
+$settingsDiag = New-Object System.Windows.Forms.Button
+$settingsDiag.Text = '导出诊断日志'
+$settingsDiag.SetBounds(350, 140, 140, 30)
+$settingsPanel.Controls.Add($settingsDiag)
 $settingsPanel.Controls.Add($settingsSave)
 $settingsStatus = New-Object System.Windows.Forms.Label
 $settingsStatus.SetBounds(20, 184, 620, 40)
@@ -718,6 +724,19 @@ $swarmRefresh.Add_Click({
   try { $r = Invoke-RestMethod -Uri "$base/api/swarm/status" -Headers $headers -TimeoutSec 10; $swarmBox.Text = ($r | ConvertTo-Json -Depth 8) } catch { $swarmBox.Text = "读取失败：$($_.Exception.Message)" }
 })
 
+
+$settingsDiag.Add_Click({
+  try {
+    $r = Invoke-RestMethod -Uri "$base/api/diagnostics" -Headers $headers -TimeoutSec 15
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $file = Join-Path $agentHome ("diagnostics-$stamp.json")
+    $r | ConvertTo-Json -Depth 20 | Set-Content $file -Encoding utf8
+    [System.Windows.Forms.MessageBox]::Show("诊断已导出：$file", '群星参谋') | Out-Null
+    Start-Process explorer.exe -ArgumentList ('/select,' + $file) | Out-Null
+  } catch {
+    [System.Windows.Forms.MessageBox]::Show("导出失败：$($_.Exception.Message)", '群星参谋') | Out-Null
+  }
+})
 
 $settingsSave.Add_Click({
   $key = $settingsKey.Text.Trim()

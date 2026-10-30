@@ -13,6 +13,8 @@ import { readAll, summarize } from './native-reader.mjs'
 import { runSteps } from './native-operator.mjs'
 import { Swarm } from './swarm.mjs'
 import { discoverDshUrl } from './dsh-discovery.mjs'
+import { logFile } from './logger.mjs'
+import { readFileSync } from 'node:fs'
 import { agentHome } from './config.mjs'
 import { loadChains, chainOf } from './event-chains.mjs'
 import { join } from 'node:path'
@@ -167,6 +169,27 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       })
       return undefined
     }
+    if (req.method === 'GET' && url.pathname === '/api/diagnostics') {
+      const status = engine.status()
+      let tail = ''
+      try { tail = readFileSync(logFile(), 'utf8').split(/\r?\n/).slice(-200).join('\n') } catch {}
+      return json(res, 200, {
+        time: new Date().toISOString(),
+        node: process.version,
+        platform: process.platform,
+        config: {
+          backend: config.swarm?.backend || 'local',
+          dshUrl: config.swarm?.dshUrl || null,
+          apiKeyConfigured: Boolean(String(config.deepseek?.apiKey || '').trim()),
+          installDir: status.installDir,
+          userDir: status.userDir,
+        },
+        status,
+        readiness: null,
+        logTail: tail,
+        logFile: logFile(),
+      })
+    }
     if (req.method === 'POST' && url.pathname === '/api/swarm/start') {
       const body = await readBody(req)
       if (!orchestrator && (config.swarm?.backend || 'local') !== 'dsh') return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' })
@@ -175,9 +198,10 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
         const config = { ...config, swarm: { ...(config.swarm || {}), ...(body?.objective ? { objective: String(body.objective) } : {}) } }
         swarm = new Swarm({ engine, orchestrator, config, log })
         const started = await swarm.start({ once: Boolean(body?.once) })
-        if (!started.ok) { swarm = null; return json(res, 500, started) }
+        if (!started.ok) { log('swarm.start.failed', started); swarm = null; return json(res, 500, started) }
         return json(res, 200, { ok: true, started, status: swarm.status() })
       } catch (error) {
+        log('swarm.start.error', { error: String(error?.message || error) })
         swarm = null
         return json(res, 500, { ok: false, error: String(error?.message || error) })
       }

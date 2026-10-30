@@ -30,6 +30,7 @@ import { NATIVE_WRITE_ACTIONS, auditAgainstDsl } from './native-actions.mjs'
 import { buildChains, saveChains, loadChains, chainOf } from './event-chains.mjs'
 import { CATALOGUE } from '../../engine/lib/actions.js'
 import { discoverDshUrl } from './dsh-discovery.mjs'
+import { createLogger } from './logger.mjs'
 import { findGameProcess } from './native-bridge.mjs'
 import { listVerbs, runVerb } from './native-verbs.mjs'
 
@@ -105,9 +106,8 @@ export async function run(argv) {
   if (flags.readonly || flags['read-only']) config.__readOnly = true
 
   mkdirSync(agentHome(), { recursive: true })
-  const log = (line) => {
-    if (process.env.STELLARIS_AGENT_DEBUG) out(`[agent] ${line}`)
-  }
+  const log = createLogger(command)
+  log('command.start', { command, args: positional })
   const engine = new Engine({ config, home: agentHome(), log }).init()
 
   const needsApi = ['ask', 'chat', 'swarm'].includes(command) || (command === 'selftest' && Boolean(flags.online))

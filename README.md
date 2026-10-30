@@ -65,6 +65,14 @@ API Key、群星安装目录、DSH 地址都在「设置」页修改，保存后
 
 如果状态栏显示 `群星: 运行中（桥未连）`，点状态栏的 **「连接群星」**；原生桥会注入游戏进程。注入成功但显示“还在主菜单”时，读档或新开一局即可。
 
+## 出错了怎么给日志
+
+- GUI：设置 → **导出诊断日志**，会生成 `%USERPROFILE%\.stellaris-agent\diagnostics-*.json`；
+- 命令行：`.\run.cmd doctor`；
+- 运行日志：`%USERPROFILE%\.stellaris-agent\logs\agent.log`（后端 stdout/err 在同目录的 `backend.*.log`）。
+
+诊断文件不含 API Key 明文，只有“是否已配置”。
+
 ### 从源码
 
 ```powershell
