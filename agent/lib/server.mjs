@@ -193,6 +193,20 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
     if (req.method === 'GET' && url.pathname === '/api/dsh/discover') {
       return json(res, 200, await discoverDshUrl())
     }
+    if (req.method === 'POST' && url.pathname === '/api/native/connect') {
+      const bridge = await ensureNativeBridge({ log })
+      if (!bridge.ok) return json(res, 503, bridge)
+      try {
+        return json(res, 200, {
+          ok: true,
+          inGame: Boolean(bridge.status?.in_game),
+          date: bridge.status?.date?.formatted || null,
+          injected: Boolean(bridge.injected),
+        })
+      } finally {
+        bridge.pipe.close()
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/api/readiness') {
       const dshUrl = String(config.swarm?.dshUrl || 'http://127.0.0.1:49939').replace(/\/+$/, '')
       const result = {

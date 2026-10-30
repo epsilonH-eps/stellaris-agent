@@ -277,11 +277,13 @@ $gameStatus = New-Object System.Windows.Forms.ToolStripStatusLabel
 $gameStatus.Text = '群星: ?'
 $aiStatus = New-Object System.Windows.Forms.ToolStripStatusLabel
 $aiStatus.Text = 'AI: ?'
+$connectGameBtn = New-Object System.Windows.Forms.ToolStripButton
+$connectGameBtn.Text = '连接群星'
 $startAiBtn = New-Object System.Windows.Forms.ToolStripButton
 $startAiBtn.Text = '▶ 自动运行 AI'
 $stopAiBtn = New-Object System.Windows.Forms.ToolStripButton
 $stopAiBtn.Text = '■ 停止 AI'
-$status.Items.AddRange(@($statusLabel, $dshStatus, $gameStatus, $aiStatus, $startAiBtn, $stopAiBtn)) | Out-Null
+$status.Items.AddRange(@($statusLabel, $dshStatus, $gameStatus, $aiStatus, $connectGameBtn, $startAiBtn, $stopAiBtn)) | Out-Null
 $form.Controls.Add($status)
 
 $tabs = New-Object System.Windows.Forms.TabControl
@@ -583,6 +585,18 @@ function Update-Health {
     $dshStatus.Text = 'DSH: ?'; $gameStatus.Text = '群星: ?'; $aiStatus.Text = 'AI: 后端不可用'
   }
 }
+
+$connectGameBtn.Add_Click({
+  try {
+    $r = Invoke-RestMethod -Uri "$base/api/native/connect" -Method Post -Headers $headers -TimeoutSec 30
+    if (-not $r.inGame) {
+      [System.Windows.Forms.MessageBox]::Show('原生桥已注入，但游戏还在主菜单；请读档或新开一局。', '群星参谋') | Out-Null
+    }
+    Update-Health
+  } catch {
+    [System.Windows.Forms.MessageBox]::Show("连接群星失败：$($_.Exception.Message)", '群星参谋') | Out-Null
+  }
+})
 
 $startAiBtn.Add_Click({
   try {
