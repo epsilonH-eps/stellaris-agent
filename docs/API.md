@@ -136,6 +136,44 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/execute `
 
 ---
 
+## 主会话直连（同步对话）
+
+如果不想"留言等下一轮"，而是**立刻拿到主会话智能体的回答**，用这两个接口：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/main` | 主会话状态 + 会话摘要（`ticking` / `turns` / 最近决策） |
+| POST | `/api/main/ask` | 直接对话：`{id, text, timeoutMs?}` → 同步返回这一轮的回复与动作结果 |
+
+```json
+POST /api/main/ask
+{ "id": "player:heyik", "text": "现在该做什么？" }
+```
+
+```json
+{
+  "ok": true,
+  "id": "player:heyik",
+  "text": "现在该做什么？",
+  "say": "先把物理研究切到激光，同时补合金。",
+  "report": "",
+  "spawned": ["research", "planet:3"],
+  "skipped": [],
+  "paused": false,
+  "resumed": false,
+  "ms": 4200
+}
+```
+
+说明：
+
+- 会占用主会话锁；如果正在跑定时决策，最多等 30 秒，超时返回 `409 BUSY`；
+- `say` 同时写进聊天出站（GUI「对话」页可见），`spawned` 里的单位会像定时 tick 一样异步执行；
+- 未启动编排器 → `409 ORCHESTRATOR_NOT_RUNNING`；模型回复不是合法 JSON → `422 PARSE_FAILED`；
+- 需要 token 时和别的接口一样带 `Authorization: Bearer …`。
+
+---
+
 ## 会话（界面用）
 
 | 方法 | 路径 | 说明 |

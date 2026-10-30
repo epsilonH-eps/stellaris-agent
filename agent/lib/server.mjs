@@ -327,6 +327,26 @@ export function startServer({ app, log = () => {} }) {
         return json(res, 200, requireOrchestrator().setObjective(body.objective))
       }
 
+      // ---------------------------------------------------------------- 主会话直连
+      if (method === 'GET' && path === '/api/main') {
+        const orchestrator = app.orchestrator
+        if (!orchestrator?.main) return fail(res, 409, 'ORCHESTRATOR_NOT_RUNNING')
+        return json(res, 200, { ok: true, main: orchestrator.main.status(), session: orchestrator.main.summary() })
+      }
+      if (method === 'POST' && path === '/api/main/ask') {
+        const body = await readBody(req)
+        if (!body || typeof body.text !== 'string' || !body.text.trim()) return fail(res, 400, 'EXPECTED_TEXT')
+        const orchestrator = requireOrchestrator()
+        if (!orchestrator.main) return fail(res, 503, 'MAIN_NOT_READY')
+        const result = await orchestrator.main.ask({
+          id: body.id || 'human',
+          text: body.text,
+          timeoutMs: Number(body.timeoutMs) || 120000,
+        })
+        const status = result.ok ? 200 : result.error === 'BUSY' ? 409 : result.error === 'EMPTY_TEXT' ? 400 : 422
+        return json(res, status, result)
+      }
+
       // ---------------------------------------------------------------- 聊天
       if (method === 'POST' && path === '/api/chat/in') {
         const body = await readBody(req)

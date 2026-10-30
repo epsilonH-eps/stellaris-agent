@@ -185,6 +185,44 @@ curl.exe -N http://127.0.0.1:8787/api/chat/stream
 
 出站消息带 `id`：`main`（主会话）、`system`（系统提示）、`unit`（子会话上报）。
 
+### 直接问主会话（同步接口）
+
+`/api/chat/in` 是"留言，等下一轮"；想立刻拿到主会话的回答，用 `/api/main/ask`：
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/main/ask `
+  -ContentType 'application/json; charset=utf-8' `
+  -Body '{"id":"player:heyik","text":"现在该做什么？"}'
+```
+
+返回：
+
+```json
+{
+  "ok": true,
+  "say": "先把物理研究切到激光，同时补合金。",
+  "spawned": ["research"],
+  "paused": false,
+  "resumed": false,
+  "ms": 4200
+}
+```
+
+- `say` 会同时出现在 GUI 的「对话」页；
+- `spawned` 里的单位会真正派发执行；
+- 正在跑定时决策时最多等 30 秒，超时返回 `BUSY`；
+- 命令行等价写法：
+
+```powershell
+.\run.cmd ask "现在该做什么？"
+```
+
+查看主会话状态（不触发模型）：
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8787/api/main
+```
+
 ---
 
 ## 8. 动作与执行器

@@ -52,6 +52,7 @@ const HELP = `群星参谋 v2
   stellaris-agent connect                立即连接（必要时注入）并按配置接管
   stellaris-agent sessions               会话列表（主会话 + 子会话）
   stellaris-agent session <id>           某个会话的完整对话
+  stellaris-agent ask "问题"             直接和主会话智能体对话（同步返回）
   stellaris-agent execute '<json>' [--unit x]  执行动作
   stellaris-agent call <method> [json]   原始 RPC
   stellaris-agent run [--objective "..."] [--once]
@@ -304,6 +305,22 @@ export async function run(argv) {
           out(message.content)
         }
         return 0
+      }
+      case 'ask': {
+        const text = positional.join(' ').trim()
+        if (!text) {
+          out('用法：ask "<内容>" [--id player] [--timeout 120000]')
+          return 2
+        }
+        await app.start({ objective: app.config.objective })
+        const result = await app.orchestrator.main.ask({
+          id: String(flags.id || 'cli'),
+          text,
+          timeoutMs: Number(flags.timeout || 120000),
+        })
+        out(pretty(result))
+        await app.stop({ resume: true })
+        return result.ok ? 0 : 1
       }
       case 'execute': {
         const payload = flags.file ? JSON.parse(readFileSync(String(flags.file), 'utf8')) : JSON.parse(positional.join(' ') || '[]')

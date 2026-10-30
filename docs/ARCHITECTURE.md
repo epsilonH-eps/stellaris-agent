@@ -322,7 +322,7 @@ HTTP：`GET /api/sessions` 与 `GET /api/sessions/<id>`（见 [API.md](API.md)�
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 80 项 node:test
+npm test                      # 86 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

@@ -230,6 +230,80 @@ export class MainSession {
     }
   }
 
+  /**
+   * 直接和主会话智能体对话：同步返回它这一轮说的话（以及暂停/派发结果）。
+   * 与定时 tick 共用 `ticking` 锁，避免两个模型调用互相覆盖上下文。
+   * @param {{id?:string, text:string, timeoutMs?:number}} input
+   */
+  async ask({ id = 'human', text, timeoutMs = 120000 } = {}) {
+    const message = String(text || '').trim()
+    if (!message) return { ok: false, error: 'EMPTY_TEXT' }
+    if (!this.backend) return { ok: false, error: 'NO_BACKEND' }
+    const world = this.getWorld()
+    if (!world) return { ok: false, error: 'NO_WORLD' }
+
+    // 正在跑定时决策时等它结束（最多 30 秒），避免并发写同一段会话
+    const deadline = Date.now() + 30000
+    while (this.ticking && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 150))
+    if (this.ticking) return { ok: false, error: 'BUSY' }
+
+    this.ticking = true
+    const startedAt = Date.now()
+    try {
+      if (!this.session.system) this.setObjective(this.objective)
+      const units = this.getUnits()
+      const digest = worldDigest(world, { completions: this.getCompletions(), maxEvents: 8, maxAlerts: 8 })
+      const payload = {
+        reason: 'human-ask',
+        speaker: { id: String(id || 'human'), text: message, at: Date.now() },
+        instruction: '玩家正在直接和你对话：先用 say 直接回答；需要行动时再 spawn 对应单位。',
+        objective: this.objective || null,
+        units: units.map((unit) => ({ id: unit.id, type: unit.type, name: unit.name })),
+        executor: this.executor.status(),
+        world: clip(digest, 20000),
+      }
+      this.session.pushUser(`直接对话：\n${JSON.stringify(payload)}`)
+      const reply = await this.session.ask({ maxTokens: this.config?.ai?.deepseek?.maxTokens, timeoutMs })
+      const parsed = parseMainDecision(reply.text)
+      if (!parsed.ok) {
+        this.lastError = parsed.error
+        this.session.pushObservation(`你的回复解析失败：${parsed.error}。请只输出一个 json 代码块，字段见系统提示。`)
+        this.log('main.ask.parse.failed', { error: parsed.error })
+        return { ok: false, error: 'PARSE_FAILED', detail: parsed.error, raw: String(reply.text || '').slice(0, 2000) }
+      }
+      const decision = parsed.value
+      const applied = await this._apply(decision)
+      this.lastDecision = { ...decision, at: Date.now(), applied }
+      this.lastTickAt = Date.now()
+      this.lastError = null
+      this.turns += 1
+      this.journal?.append({
+        kind: 'main.ask',
+        text: decision.say || '(no say)',
+        meta: { id, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, ms: Date.now() - startedAt },
+      })
+      this.log('main.ask', { id, say: Boolean(decision.say), spawned: applied.spawned.length, ms: Date.now() - startedAt })
+      return {
+        ok: true,
+        id,
+        text: message,
+        say: decision.say,
+        report: decision.report,
+        spawned: applied.spawned,
+        skipped: applied.skipped,
+        paused: applied.paused,
+        resumed: applied.resumed,
+        ms: Date.now() - startedAt,
+      }
+    } catch (error) {
+      this.lastError = String(error?.message || error)
+      this.log('main.ask.failed', { error: this.lastError })
+      return { ok: false, error: 'ASK_FAILED', detail: this.lastError }
+    } finally {
+      this.ticking = false
+    }
+  }
+
   async _apply(decision) {
     const applied = { spawned: [], skipped: [], paused: false, resumed: false }
     if (decision.say) {
