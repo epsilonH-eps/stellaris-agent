@@ -34,6 +34,7 @@ import { describeActions, validateActions } from './actions.mjs'
 import { discoverUnits } from './context.mjs'
 import { installPlugin, pluginVersions, reloadDsh } from './dsh-plugin.mjs'
 import { FailureStore } from './failures.mjs'
+import { PRESETS, applyPreset, mergeImportedPersona, parsePersonaImport } from './persona.mjs'
 import { createLogger } from './logger.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -55,6 +56,10 @@ const HELP = `群星参谋 v2
   stellaris-agent session <id>           某个会话的完整对话
   stellaris-agent failures [--limit 20]  最近失败的子会话报告
   stellaris-agent failure <id> [--markdown]  看一份失败报告（默认 latest）
+  stellaris-agent persona [show]         查看人格 / 属性 / 组件
+  stellaris-agent persona preset <id>    应用人格预设
+  stellaris-agent persona import <文件>  导入人格组件（JSON/角色卡/Markdown）
+  stellaris-agent voice [--limit 20]     主会话最近说的"人话"
   stellaris-agent ask "问题"             直接和主会话智能体对话（同步返回）
   stellaris-agent execute '<json>' [--unit x]  执行动作
   stellaris-agent call <method> [json]   原始 RPC
@@ -307,6 +312,47 @@ export async function run(argv) {
           out(`[${who}]`)
           out(message.content)
         }
+        return 0
+      }
+      case 'persona': {
+        const action = positional[0] || 'show'
+        if (action === 'presets') {
+          out(pretty(Object.values(PRESETS).map((preset) => ({ id: preset.id, label: preset.label, name: preset.name, traits: preset.traits }))))
+          return 0
+        }
+        if (action === 'preset') {
+          const id = positional[1]
+          if (!id || !PRESETS[id]) {
+            out(`未知预设：${id || '(空)'}；可选：${Object.keys(PRESETS).join(', ')}`)
+            return 2
+          }
+          const result = await app.setPersona(applyPreset(app.personaInfo().raw, id))
+          out(pretty({ ok: true, preset: id, name: result.persona.name, traits: result.persona.traits, components: result.persona.components.length }))
+          return 0
+        }
+        if (action === 'import') {
+          const file = positional[1]
+          if (!file) {
+            out('用法：persona import <文件> [--name 名称] [--no-fields]')
+            return 2
+          }
+          const text = readFileSync(file, 'utf8')
+          const imported = parsePersonaImport(text, { name: flags.name || '', filename: file, base: app.personaInfo().raw })
+          if (!imported.ok) {
+            out(`导入失败：${imported.error}`)
+            return 1
+          }
+          const next = mergeImportedPersona(app.personaInfo().raw, imported, { applyFields: flags['no-fields'] !== true })
+          const result = await app.setPersona(next)
+          out(pretty({ ok: true, format: imported.format, component: imported.component, persona: result.persona }))
+          return 0
+        }
+        out(pretty(app.personaInfo()))
+        return 0
+      }
+      case 'voice': {
+        const info = app.voices({ since: String(flags.since || ''), limit: Number(flags.limit) || 20 })
+        out(pretty(info))
         return 0
       }
       case 'failures': {

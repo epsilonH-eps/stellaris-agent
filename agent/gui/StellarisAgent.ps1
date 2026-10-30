@@ -434,6 +434,9 @@ $runPause = New-Button $runPanel '暂停游戏' 256 90 44
 $runResume = New-Button $runPanel '恢复游戏' 352 90 44
 $runStatusBtn = New-Button $runPanel '刷新状态' 448 90 44
 
+# ---------------------------------------------------------------- 人格
+$tabPersona = New-TabPage '人格'
+
 # ---------------------------------------------------------------- 设置
 $tabSet = New-TabPage '设置'
 $setScroll = New-Object System.Windows.Forms.Panel
@@ -601,6 +604,299 @@ function Format-Session($s) {
     [void]$sb.AppendLine([string]$m.content)
   }
   return $sb.ToString()
+}
+
+# ---------------------------------------------------------------- 人格
+$personaTop = New-Object System.Windows.Forms.Panel
+$personaTop.Dock = 'Top'
+$personaTop.Height = 46
+$tabPersona.Controls.Add($personaTop)
+$personaPresetLabel = New-Object System.Windows.Forms.Label
+$personaPresetLabel.Text = '预设'
+$personaPresetLabel.SetBounds(10, 13, 36, 22)
+$personaTop.Controls.Add($personaPresetLabel)
+$personaPreset = New-Object System.Windows.Forms.ComboBox
+$personaPreset.SetBounds(48, 11, 210, 24)
+$personaPreset.DropDownStyle = 'DropDownList'
+$personaTop.Controls.Add($personaPreset)
+$personaApplyPreset = New-Button $personaTop '应用预设' 266 88 10
+$personaImportBtn = New-Button $personaTop '导入组件文件' 360 106 10
+$personaPasteBtn = New-Button $personaTop '粘贴导入' 472 88 10
+$personaSave = New-Button $personaTop '保存并应用' 566 106 10
+$personaPreviewBtn = New-Button $personaTop '预览提示词' 678 100 10
+$personaStatus = New-Object System.Windows.Forms.Label
+$personaStatus.SetBounds(786, 13, 380, 22)
+$personaStatus.ForeColor = [System.Drawing.Color]::Gray
+$personaTop.Controls.Add($personaStatus)
+
+$personaLeft = New-Object System.Windows.Forms.GroupBox
+$personaLeft.Text = 'AI 属性（0-100，拖动滑动条）'
+$personaLeft.SetBounds(12, 56, 430, 566)
+$tabPersona.Controls.Add($personaLeft)
+$script:traitBars = @{}
+$script:traitVals = @{}
+$traitDefs = @(
+  @{ key = 'aggression'; label = '侵略性' },
+  @{ key = 'boldness'; label = '大胆' },
+  @{ key = 'caution'; label = '谨慎' },
+  @{ key = 'honor'; label = '荣誉' },
+  @{ key = 'diplomacy'; label = '外交' },
+  @{ key = 'expansion'; label = '扩张' },
+  @{ key = 'economy'; label = '经济' },
+  @{ key = 'research'; label = '科研' },
+  @{ key = 'military'; label = '军事' },
+  @{ key = 'compassion'; label = '共情' }
+)
+$traitY = 30
+foreach ($trait in $traitDefs) {
+  [void](Add-Label $personaLeft $trait.label 12 $traitY 88)
+  $bar = New-Object System.Windows.Forms.TrackBar
+  $bar.SetBounds(100, ($traitY - 6), 270, 36)
+  $bar.Minimum = 0
+  $bar.Maximum = 100
+  $bar.TickFrequency = 10
+  $bar.SmallChange = 5
+  $bar.LargeChange = 10
+  $bar.Value = 50
+  $personaLeft.Controls.Add($bar)
+  $val = Add-Label $personaLeft '50' 378 $traitY 32
+  $val.TextAlign = 'MiddleRight'
+  $script:traitBars[$trait.key] = $bar
+  $script:traitVals[$trait.key] = $val
+  $key = $trait.key
+  $bar.Add_ValueChanged({
+    param($sender, $eventArgs)
+    if (-not $script:personaLoading) {
+      $script:traitVals[$key].Text = [string]$sender.Value
+      $script:personaDirty = $true
+    }
+  }.GetNewClosure())
+  $traitY += 50
+}
+$personaLeftHint = New-Object System.Windows.Forms.Label
+$personaLeftHint.Text = '这些数值会直接写进主会话人格提示词；越极端，决策越有倾向。'
+$personaLeftHint.ForeColor = [System.Drawing.Color]::Gray
+$personaLeftHint.SetBounds(12, 528, 400, 22)
+$personaLeft.Controls.Add($personaLeftHint)
+
+$personaRight = New-Object System.Windows.Forms.GroupBox
+$personaRight.Text = '人格设定 / 人格组件'
+$personaRight.SetBounds(454, 56, 720, 566)
+$tabPersona.Controls.Add($personaRight)
+
+[void](Add-Label $personaRight '名字' 12 28 52)
+$personaName = Add-TextBox $personaRight 66 26 200
+[void](Add-Label $personaRight '头衔' 286 28 44)
+$personaTitle = Add-TextBox $personaRight 332 26 240
+
+[void](Add-Label $personaRight '身份' 12 64 52)
+$personaIdentity = Add-TextBox $personaRight 66 62 610
+$personaIdentity.Multiline = $true
+$personaIdentity.Height = 44
+$personaIdentity.ScrollBars = 'Vertical'
+
+[void](Add-Label $personaRight '来路' 12 116 52)
+$personaBackground = Add-TextBox $personaRight 66 114 610
+$personaBackground.Multiline = $true
+$personaBackground.Height = 54
+$personaBackground.ScrollBars = 'Vertical'
+
+[void](Add-Label $personaRight '在意的事' 12 176 60)
+$personaValues = Add-TextBox $personaRight 66 174 610
+$personaValues.Multiline = $true
+$personaValues.Height = 44
+$personaValues.ScrollBars = 'Vertical'
+
+[void](Add-Label $personaRight '小毛病' 12 226 60)
+$personaQuirks = Add-TextBox $personaRight 66 224 610
+$personaQuirks.Multiline = $true
+$personaQuirks.Height = 44
+$personaQuirks.ScrollBars = 'Vertical'
+
+[void](Add-Label $personaRight '说话风格' 12 276 60)
+$personaStyle = Add-TextBox $personaRight 66 274 610
+$personaStyle.Multiline = $true
+$personaStyle.Height = 40
+$personaStyle.ScrollBars = 'Vertical'
+
+[void](Add-Label $personaRight '嗓音' 12 322 52)
+$personaVoiceDesc = Add-TextBox $personaRight 66 320 250
+[void](Add-Label $personaRight '单句字数' 330 322 70)
+$personaMaxChars = New-Object System.Windows.Forms.NumericUpDown
+$personaMaxChars.SetBounds(404, 320, 70, 24)
+$personaMaxChars.Minimum = 20
+$personaMaxChars.Maximum = 500
+$personaMaxChars.Value = 120
+$personaRight.Controls.Add($personaMaxChars)
+
+$personaVoiceEnabled = New-Object System.Windows.Forms.CheckBox
+$personaVoiceEnabled.Text = '启用“人话”（voice）'
+$personaVoiceEnabled.SetBounds(66, 352, 170, 22)
+$personaRight.Controls.Add($personaVoiceEnabled)
+[void](Add-Label $personaRight '每 N 轮' 244 352 54)
+$personaEvery = New-Object System.Windows.Forms.NumericUpDown
+$personaEvery.SetBounds(302, 350, 54, 24)
+$personaEvery.Minimum = 1
+$personaEvery.Maximum = 20
+$personaEvery.Value = 1
+$personaRight.Controls.Add($personaEvery)
+[void](Add-Label $personaRight '最短间隔(秒)' 366 352 86)
+$personaMin = New-Object System.Windows.Forms.NumericUpDown
+$personaMin.SetBounds(456, 350, 70, 24)
+$personaMin.Minimum = 0
+$personaMin.Maximum = 600
+$personaMin.Value = 15
+$personaRight.Controls.Add($personaMin)
+
+[void](Add-Label $personaRight '示例句子' 12 384 60)
+$personaExamples = Add-TextBox $personaRight 66 382 610
+$personaExamples.Multiline = $true
+$personaExamples.Height = 44
+$personaExamples.ScrollBars = 'Vertical'
+
+[void](Add-Label $personaRight '人格组件' 12 436 60)
+$personaComponents = New-Object System.Windows.Forms.ListBox
+$personaComponents.SetBounds(66, 434, 500, 84)
+$personaComponents.Font = New-Object System.Drawing.Font('Microsoft YaHei UI', 9)
+$personaRight.Controls.Add($personaComponents)
+$personaRemoveComponent = New-Button $personaRight '移除' 578 60 434
+$personaImportInline = New-Button $personaRight '导入' 578 60 464
+$personaPasteInline = New-Button $personaRight '粘贴' 578 60 494
+
+$personaHint = New-Object System.Windows.Forms.Label
+$personaHint.Text = '数值是“倾向”，不是硬规则；人格组件支持 Character Card V2 / JSON / Markdown / 纯文本。主会话每轮会输出 voice（人话），外部程序可轮询 /api/voice。'
+$personaHint.ForeColor = [System.Drawing.Color]::Gray
+$personaHint.SetBounds(12, 528, 700, 30)
+$personaRight.Controls.Add($personaHint)
+
+$script:personaLoading = $false
+$script:personaDirty = $false
+$script:personaPresetIds = @()
+$script:personaComponentIds = @()
+
+function Set-PersonaDraft($persona) {
+  $script:personaLoading = $true
+  try {
+    foreach ($key in $script:traitBars.Keys) {
+      $value = 50
+      if ($null -ne $persona.traits -and $null -ne $persona.traits.$key) { $value = [int]$persona.traits.$key }
+      $script:traitBars[$key].Value = [Math]::Max(0, [Math]::Min(100, $value))
+      $script:traitVals[$key].Text = [string]$script:traitBars[$key].Value
+    }
+    $personaName.Text = [string]$persona.name
+    $personaTitle.Text = [string]$persona.title
+    $personaIdentity.Text = [string]$persona.identity
+    $personaBackground.Text = [string]$persona.background
+    $personaValues.Text = (@($persona.values) -join "`r`n")
+    $personaQuirks.Text = (@($persona.quirks) -join "`r`n")
+    $personaStyle.Text = [string]$persona.speech.style
+    $personaVoiceDesc.Text = [string]$persona.speech.voice
+    $personaMaxChars.Value = [Math]::Max(20, [Math]::Min(500, [int]$persona.speech.maxChars))
+    $personaExamples.Text = (@($persona.speech.examples) -join "`r`n")
+    $personaVoiceEnabled.Checked = ($persona.voice.enabled -ne $false)
+    $personaEvery.Value = [Math]::Max(1, [Math]::Min(20, [int]$persona.voice.everyTurns))
+    $personaMin.Value = [Math]::Max(0, [Math]::Min(600, [int]$persona.voice.minIntervalSeconds))
+    $personaComponents.Items.Clear()
+    $script:personaComponentIds = @()
+    foreach ($component in @($persona.components)) {
+      [void]$personaComponents.Items.Add("$($component.name) · $($component.chars) 字")
+      $script:personaComponentIds += [string]$component.id
+    }
+    if ($script:personaPresetIds.Count -gt 0) {
+      $index = [Array]::IndexOf($script:personaPresetIds, [string]$persona.preset)
+      if ($index -ge 0) { $personaPreset.SelectedIndex = $index }
+    }
+    $script:personaDirty = $false
+  } finally {
+    $script:personaLoading = $false
+  }
+}
+
+function Get-PersonaDraft {
+  $traits = @{}
+  foreach ($key in $script:traitBars.Keys) { $traits[$key] = [int]$script:traitBars[$key].Value }
+  return @{
+    name = $personaName.Text.Trim()
+    title = $personaTitle.Text.Trim()
+    preset = 'custom'
+    traits = $traits
+    identity = $personaIdentity.Text.Trim()
+    background = $personaBackground.Text.Trim()
+    values = @($personaValues.Text -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+    quirks = @($personaQuirks.Text -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+    speech = @{
+      style = $personaStyle.Text.Trim()
+      voice = $personaVoiceDesc.Text.Trim()
+      language = '中文'
+      maxChars = [int]$personaMaxChars.Value
+      examples = @($personaExamples.Text -split "`r?`n" | Where-Object { $_.Trim() } | ForEach-Object { $_.Trim() })
+    }
+    voice = @{
+      enabled = [bool]$personaVoiceEnabled.Checked
+      everyTurns = [int]$personaEvery.Value
+      minIntervalSeconds = [int]$personaMin.Value
+    }
+  }
+}
+
+function Refresh-Persona {
+  try {
+    $r = Invoke-Api -Path '/api/persona' -TimeoutSec 15
+    if ($script:personaPresetIds.Count -eq 0) {
+      $personaPreset.Items.Clear()
+      $script:personaPresetIds = @()
+      foreach ($preset in @($r.presets)) {
+        [void]$personaPreset.Items.Add([string]$preset.label)
+        $script:personaPresetIds += [string]$preset.id
+      }
+    }
+    Set-PersonaDraft $r.persona
+    $personaStatus.Text = "已加载 · $(Get-Date -Format HH:mm:ss)"
+  } catch {
+    $personaStatus.Text = "未连接后端：$($_.Exception.Message)"
+  }
+}
+
+function Save-Persona {
+  try {
+    $draft = Get-PersonaDraft
+    $r = Invoke-Api -Path '/api/persona' -Method POST -Body @{ persona = $draft } -TimeoutSec 20
+    Set-PersonaDraft $r.persona
+    $personaStatus.Text = "已保存并应用 · $(Get-Date -Format HH:mm:ss)"
+  } catch { Show-Error '保存人格失败' $_ }
+}
+
+function Import-PersonaText([string]$text, [string]$name) {
+  if (-not $text -or -not $text.Trim()) { return }
+  try {
+    $r = Invoke-Api -Path '/api/persona/import' -Method POST -Body @{ text = $text; filename = $name } -TimeoutSec 30
+    Refresh-Persona
+    $label = if ($r.component) { $r.component.name } else { '组件' }
+    [System.Windows.Forms.MessageBox]::Show("已导入：$label（$($r.format)）", '人格组件') | Out-Null
+  } catch { Show-Error '导入人格组件失败' $_ }
+}
+
+function Import-PersonaFile {
+  $dlg = New-Object System.Windows.Forms.OpenFileDialog
+  $dlg.Title = '选择人格组件（Character Card V2 / JSON / Markdown / 文本）'
+  $dlg.Filter = '人格组件 (*.json;*.md;*.txt)|*.json;*.md;*.txt|所有文件 (*.*)|*.*'
+  if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+    try {
+      $text = [System.IO.File]::ReadAllText($dlg.FileName, [System.Text.Encoding]::UTF8)
+      Import-PersonaText $text ([System.IO.Path]::GetFileName($dlg.FileName))
+    } catch { Show-Error '读取人格组件失败' $_ }
+  }
+}
+
+function Import-PersonaClipboard {
+  try {
+    $text = [System.Windows.Forms.Clipboard]::GetText()
+    if (-not $text -or -not $text.Trim()) {
+      [System.Windows.Forms.MessageBox]::Show('剪贴板里没有文本。', '粘贴导入') | Out-Null
+      return
+    }
+    Import-PersonaText $text 'clipboard.txt'
+  } catch { Show-Error '粘贴导入失败' $_ }
 }
 
 # ---------------------------------------------------------------- 状态刷新
@@ -807,6 +1103,41 @@ $connectBtn.Add_Click({
   } catch { Show-Error '连接失败' $_ }
 })
 
+$personaSave.Add_Click({ Save-Persona })
+$personaApplyPreset.Add_Click({
+  try {
+    $index = $personaPreset.SelectedIndex
+    if ($index -lt 0 -or $index -ge $script:personaPresetIds.Count) { return }
+    $r = Invoke-Api -Path '/api/persona/preset' -Method POST -Body @{ id = $script:personaPresetIds[$index] } -TimeoutSec 20
+    Set-PersonaDraft $r.persona
+    $personaStatus.Text = "已应用预设：$($personaPreset.Text)"
+  } catch { Show-Error '应用人格预设失败' $_ }
+})
+$personaImportBtn.Add_Click({ Import-PersonaFile })
+$personaImportInline.Add_Click({ Import-PersonaFile })
+$personaPasteBtn.Add_Click({ Import-PersonaClipboard })
+$personaPasteInline.Add_Click({ Import-PersonaClipboard })
+$personaPreviewBtn.Add_Click({
+  try {
+    $r = Invoke-Api -Path '/api/persona' -TimeoutSec 15
+    $text = [string]$r.prompt
+    if ($text.Length -gt 6000) { $text = $text.Substring(0, 6000) + "`r`n…（已截断）" }
+    [System.Windows.Forms.MessageBox]::Show($text, '人格提示词预览') | Out-Null
+  } catch { Show-Error '读取人格提示词失败' $_ }
+})
+$personaRemoveComponent.Add_Click({
+  try {
+    $index = $personaComponents.SelectedIndex
+    if ($index -lt 0 -or $index -ge $script:personaComponentIds.Count) { return }
+    $null = Invoke-Api -Path '/api/persona/component/remove' -Method POST -Body @{ id = $script:personaComponentIds[$index] } -TimeoutSec 20
+    Refresh-Persona
+    $personaStatus.Text = '已移除人格组件'
+  } catch { Show-Error '移除人格组件失败' $_ }
+})
+$tabs.Add_SelectedIndexChanged({
+  if ($tabs.SelectedTab -eq $tabPersona) { Refresh-Persona }
+})
+
 $subFailBtn.Add_Click({
   try {
     $dir = Join-Path $agentHome 'failures'
@@ -986,11 +1317,27 @@ if ($SelfTest) {
   if ((Val $null 'fallback') -ne 'fallback') { throw 'Val 输出异常' }
   # 单窗口布局：必须有主会话/子会话两个页签，且子会话是下拉框
   $tabNames = @($tabs.TabPages | ForEach-Object { $_.Text })
-  foreach ($need in @('战局', '主会话', '子会话', '设置')) {
+  foreach ($need in @('战局', '主会话', '子会话', '人格', '设置')) {
     if (-not ($tabNames -contains $need)) { throw "缺少页签：$need（实际 $($tabNames -join ',')）" }
   }
   if ($tabNames -contains '会话') { throw '不应再有旧的「会话」页签' }
   if ($subSelect.GetType().Name -ne 'ComboBox') { throw '子会话选择器不是下拉框' }
+  if ($personaComponents.GetType().Name -ne 'ListBox') { throw '人格组件不是列表' }
+  if ($script:traitBars.Count -ne 10) { throw "AI 属性滑动条数量不对：$($script:traitBars.Count)" }
+  foreach ($bar in $script:traitBars.Values) {
+    if ($bar.Minimum -ne 0 -or $bar.Maximum -ne 100) { throw 'AI 属性滑动条范围不是 0-100' }
+  }
+  $samplePersona = @{
+    name = '自检'; title = '测试'; preset = 'custom'
+    traits = @{ aggression = 77; boldness = 50; caution = 50; honor = 50; diplomacy = 50; expansion = 50; economy = 50; research = 50; military = 50; compassion = 50 }
+    identity = '身份'; background = '来路'; values = @('价值'); quirks = @('怪癖')
+    speech = @{ style = '风格'; voice = '嗓音'; maxChars = 100; examples = @('示例') }
+    voice = @{ enabled = $true; everyTurns = 1; minIntervalSeconds = 15 }
+    components = @(@{ id = 'c1'; name = '组件'; chars = 12 })
+  }
+  Set-PersonaDraft ([pscustomobject]$samplePersona)
+  if ($script:traitBars['aggression'].Value -ne 77) { throw '人格滑动条未按数值渲染' }
+  if (-not $personaName.Text.Contains('自检')) { throw '人格文本框未按数值渲染' }
   # 两个会话面板各渲染一次（不依赖后端）
   Update-SessionBoxes $subSummary $subTranscript $sample
   if (-not $subSummary.Text.Contains('主会话')) { throw '子会话摘要面板渲染失败' }

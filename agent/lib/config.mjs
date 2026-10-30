@@ -13,6 +13,11 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, isAbsolute } from 'node:path'
+import { DEFAULT_PERSONA } from './persona.mjs'
+
+function freshPersona() {
+  return JSON.parse(JSON.stringify(DEFAULT_PERSONA))
+}
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -96,6 +101,7 @@ export const DEFAULT_CONFIG = {
   chat: { enabled: true, port: 8787, token: '', maxHistory: 500 },
   dshPlugin: { autoInstall: true, autoReload: false, profileDir: '', restartCommand: '' },
   journal: { enabled: true },
+  persona: freshPersona(),
   failures: {
     dir: '', // 留空 = <home>/failures
     maxFiles: 200,

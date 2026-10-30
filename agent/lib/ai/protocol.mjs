@@ -84,6 +84,9 @@ export function parseMainDecision(text) {
     error: null,
     value: {
       say: asString(raw.say || raw.message || raw.reply).trim(),
+      voice: asString(raw.voice || raw.voice_line || raw.spoken || raw.speak).trim().slice(0, 600),
+      mood: asString(raw.mood || raw.emotion).trim().slice(0, 40),
+      intent: asString(raw.intent || raw.purpose).trim().slice(0, 300),
       report: asString(raw.report || raw.analysis).trim(),
       pause: raw.pause === true,
       resume: raw.resume === true,

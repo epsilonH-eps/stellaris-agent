@@ -197,6 +197,7 @@ export class Orchestrator {
       setInterval: (unitId, seconds) => this.unitIntervals.set(unitId, Number(seconds) || 0),
       log: this.log,
       journal: this.journal,
+      home: this.home,
     })
     this.main.setObjective(this.objective)
     this.running = true

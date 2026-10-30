@@ -8,6 +8,8 @@ import { agentHome, configFile, loadConfig, saveConfig, mergeConfig, backendOf }
 import { Orchestrator, resolvePaths } from './orchestrator.mjs'
 import { installPlugin, reloadDsh, updateAndReloadPlugin, pluginVersions } from './dsh-plugin.mjs'
 import { FailureStore } from './failures.mjs'
+import { PRESETS, normalizePersona, personaPrompt, personaSummary } from './persona.mjs'
+import { VoiceLog } from './voice.mjs'
 import { discoverDsh } from './ai/dsh.mjs'
 import { createBackend } from './ai/backend.mjs'
 import { ensureBridge, findGameProcess, getSharedBridge } from './bridge.mjs'
@@ -61,6 +63,39 @@ export class App {
   /** 编排器没启动时，失败报告列表也要能读（直接扫 failures 目录）。 */
   failureStore() {
     return this.orchestrator?.failures || new FailureStore({ home: this.home, config: this.config, log: this.log })
+  }
+
+  /** 人格：配置 + 预设 + 当前 system prompt 预览。 */
+  personaInfo() {
+    const persona = normalizePersona(this.config?.persona)
+    return {
+      persona: personaSummary(persona),
+      raw: persona,
+      presets: Object.values(PRESETS).map((preset) => ({ id: preset.id, label: preset.label, name: preset.name, traits: preset.traits })),
+      prompt: this.orchestrator?.main?.personaPrompt?.() || personaPrompt(persona),
+    }
+  }
+
+  /** 保存人格并立即应用到运行中的主会话（不重启调度）。 */
+  async setPersona(persona) {
+    const next = normalizePersona(persona, this.config?.persona)
+    this.config.persona = next
+    saveConfig(this.config)
+    this.orchestrator?.main?.applyPersona(next)
+    this.log('app.persona.saved', {
+      name: next.name,
+      preset: next.preset,
+      traits: next.traits,
+      components: next.components.length,
+      voice: next.voice,
+    })
+    return this.personaInfo()
+  }
+
+  /** 主会话的人话输出（编排器没启动时读今天的 voice 日志）。 */
+  voices({ since = '', limit = 50 } = {}) {
+    const log = this.orchestrator?.main?.voices || new VoiceLog({ home: this.home, log: this.log })
+    return { dir: log.dir, voices: log.list({ since, limit }), latest: log.latest() }
   }
 
   /** 编排器没启动时，readiness 也要复用同一个后端实例（DSH 端口发现要缓存） */

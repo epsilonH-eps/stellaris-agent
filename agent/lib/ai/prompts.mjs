@@ -7,6 +7,7 @@
  * @module stellaris-agent/ai/prompts
  */
 import { UNIT_TYPES, actionsPrompt, actionsForUnit } from '../actions.mjs'
+import { personaPrompt } from '../persona.mjs'
 
 const COMMON_RULES = [
   '你在玩《群星》(Stellaris 4.5)，通过原生桥读写真实游戏状态。',
@@ -29,6 +30,8 @@ export function mainSystemPrompt({ config, units = [], objective = '' } = {}) {
     config?.objective ? `## 长期战略目标\n${config.objective}` : '',
     objective ? `## 本轮额外目标\n${objective}` : '',
     '',
+    personaPrompt(config?.persona),
+    '',
     '## 可调度的单位',
     unitLines || '- （尚未发现单位；先暂停并等下一次刷新）',
     '',
@@ -36,6 +39,9 @@ export function mainSystemPrompt({ config, units = [], objective = '' } = {}) {
     '```json',
     JSON.stringify(
       {
+        voice: '像人一样的一句话：此刻的用意、看法、判断或情绪（给外部 TTS，可空）',
+        mood: '平静/担忧/兴奋/疲惫/不耐烦…',
+        intent: '这句话的用意（只做记录，不朗读）',
         say: '给玩家的一句话（会直接显示在聊天窗口，可空）',
         pause: false,
         resume: false,
@@ -52,6 +58,9 @@ export function mainSystemPrompt({ config, units = [], objective = '' } = {}) {
     '- 同一个单位不要连续派发相同目标；它回报完成后你再决定下一步。',
     '- 队列积压（queuedActions 高）时先 `pause: true`，等子会话做完再 `resume: true`。',
     '- 玩家在聊天里问了问题：用 `say` 回答，必要时同时派发执行。',
+    '- `voice` 是"你作为一个人"说出来的话：每一轮说一句，表达用意/看法/情绪/对局势的理解；',
+    `  它会直接交给外部 TTS 朗读，所以不要复述数值、JSON、字段名，也不要写成命令清单（<= ${config?.persona?.speech?.maxChars ?? 120} 字）。`,
+    '- `say` 是聊天窗口文字，可以和 `voice` 不同；没有想说的可以留空，但 `voice` 尽量每轮都有。',
     `- 每次最多派发 ${config?.ai?.main?.maxActionsPerTurn ?? 8} 个单位。`,
   ]
     .filter(Boolean)

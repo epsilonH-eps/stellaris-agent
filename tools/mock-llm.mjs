@@ -28,8 +28,14 @@ function decide(system, userText) {
   }
   if (/总指挥/.test(system)) {
     // 主会话：已经有人回报成功时不再重复派发，避免测试里死循环
-    if (/"status"\s*:\s*"ok"/.test(userText)) return { say: '收到，继续观察', spawn: [] }
-    return { say: '测试接管：先把物理研究切到激光', spawn: [{ unit: 'research', goal: '把物理研究切换到 tech_lasers_1' }] }
+    if (/"status"\s*:\s*"ok"/.test(userText)) return { say: '收到，继续观察', voice: '行，先让他们忙，我们看着。', mood: '平静', spawn: [] }
+    return {
+      say: '测试接管：先把物理研究切到激光',
+      voice: '他们以为我们不敢动手，那就让他们继续以为。',
+      mood: '冷静',
+      intent: '试探并推进科研',
+      spawn: [{ unit: 'research', goal: '把物理研究切换到 tech_lasers_1' }],
+    }
   }
   return { say: '无需操作', actions: [], status: 'ok' }
 }

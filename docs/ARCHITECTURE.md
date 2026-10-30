@@ -315,6 +315,17 @@ HTTP：`GET /api/sessions` 与 `GET /api/sessions/<id>`（见 [API.md](API.md)�
 HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown`；
 界面「子会话」页右上角「失败报告」直接打开目录；CLI `failures` / `failure <id>`。
 
+### 人格与 voice
+
+- `agent/lib/persona.mjs`：10 个 0-100 属性、7 个预设、`normalizePersona`、`personaPrompt`，
+  以及 Character Card V2 / JSON / Markdown 导入（`parsePersonaImport` + `mergeImportedPersona`）；
+- 主会话 system prompt 由 `mainSystemPrompt({config.persona})` 注入人格段与“人话”规则；
+- 模型输出的 `voice/mood/intent` 经 `parseMainDecision` 归一化后，由 `MainSession._emitVoice`
+  按 `persona.voice.everyTurns` / `minIntervalSeconds` 节流；
+- 输出三路：`VoiceLog`（`<home>/voice/` 按天 JSONL + `latest.json`）、聊天出站 `kind=voice`、
+  `onVoice` 回调；HTTP `GET /api/voice` 支持 `since` 游标，供 TTS/直播轮询；
+- `POST /api/persona` 保存并调用 `main.applyPersona()` 立即重建 system prompt，不重启调度。
+
 ### 自动连接（看护循环）
 
 `App.startWatcher()` 每 `bridge.watchSeconds` 检查一次：
@@ -338,7 +349,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 92 项 node:test
+npm test                      # 105 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

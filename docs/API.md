@@ -174,6 +174,82 @@ POST /api/main/ask
 
 ---
 
+## 人格（AI 属性 / 人格组件 / 人话）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/persona` | 当前人格、预设、system prompt 预览 |
+| POST | `/api/persona` | `{persona}` 保存并立即应用（不用重启调度） |
+| POST | `/api/persona/preset` | `{id}` 应用内置预设：`balanced/conqueror/guardian/diplomat/scientist/industrialist/fanatic` |
+| POST | `/api/persona/import` | `{text, name?, filename?, applyFields?}` 导入人格组件（Character Card V2 / JSON / Markdown / 纯文本） |
+| POST | `/api/persona/component/remove` | `{id}` 移除一个人格组件 |
+| GET | `/api/voice?since=&limit=` | 主会话说过的“人话”（游标分页） |
+| GET | `/api/voice/latest` | 最近一句 |
+
+人格结构（节选）：
+
+```json
+{
+  "persona": {
+    "name": "铁腕",
+    "title": "征服者",
+    "preset": "conqueror",
+    "traits": {
+      "aggression": 88, "boldness": 82, "caution": 28,
+      "honor": 35, "diplomacy": 22, "expansion": 88,
+      "economy": 45, "research": 40, "military": 90, "compassion": 20
+    },
+    "identity": "...", "background": "...",
+    "values": ["..."], "quirks": ["..."],
+    "speech": { "style": "...", "voice": "...", "language": "中文", "maxChars": 120, "examples": ["..."] },
+    "voice": { "enabled": true, "everyTurns": 1, "minIntervalSeconds": 15 },
+    "components": [{ "id": "ash", "name": "灰烬", "enabled": true }]
+  }
+}
+```
+
+`/api/voice`：
+
+```json
+{
+  "ok": true,
+  "dir": "C:\\Users\\heyik\\.stellaris-agent\\voice",
+  "voices": [
+    {
+      "id": "v-1793375259718-1",
+      "at": 1793375259718,
+      "text": "他们以为我们不敢动手，那就让他们继续以为。",
+      "mood": "冷静",
+      "intent": "试探并推进科研",
+      "turn": 3,
+      "reason": "timer",
+      "actions": ["research"]
+    }
+  ],
+  "latest": { "...": "..." }
+}
+```
+
+- 外部 TTS/直播：轮询 `GET /api/voice?since=<lastId>`，只读 `text` 即可；
+- 同时也写进聊天出站（`kind: "voice"`），SSE `/api/chat/stream` 能看到；
+- 文件落在 `%USERPROFILE%\.stellaris-agent\voice\`（按天 JSONL + `latest.json`）。
+
+导入返回：
+
+```json
+{
+  "ok": true,
+  "format": "chara_card_v2",
+  "component": { "id": "ash", "name": "灰烬", "chars": 512 },
+  "persona": { "name": "灰烬", "components": [{ "id": "ash", "name": "灰烬" }] }
+}
+```
+
+Character Card V2 的 `name/description/personality/scenario/mes_example` 会映射到人格字段，
+同时保留原始卡片作为组件（不丢设定）。
+
+---
+
 ## 失败报告（子会话失败原因）
 
 任何单位/事件子会话最终失败（`blocked` / `error`）时，编排器会自动导出两份文件到

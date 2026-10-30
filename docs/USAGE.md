@@ -95,6 +95,13 @@ $env:STELLARIS_GUI_NO_DIALOG='1'
 - 启动/停止/重启调度、暂停/恢复游戏、查看完整状态。
 - 「停止」后有 5 分钟冷静期，不会被自动拉起。
 
+**人格**
+- 顶部：预设下拉 + 「应用预设」、导入组件文件 / 粘贴导入、保存并应用、预览提示词。
+- 左侧：**10 条滑动条**（侵略性 / 大胆 / 谨慎 / 荣誉 / 外交 / 扩张 / 经济 / 科研 / 军事 / 共情），0-100，直接写进主会话人格提示词。
+- 右侧：名字、头衔、身份、来路、在意的事、小毛病、说话风格、嗓音、单句字数、示例句子；voice 开关 / 每 N 轮 / 最短间隔。
+- 人格组件：支持 Character Card V2、普通 JSON、Markdown、纯文本；导入后保留原文，可多份叠加、可移除。
+- 「保存并应用」会立刻重建主会话 system prompt，不用重启调度。
+
 **设置**
 - 见第 6 节。
 
@@ -184,6 +191,41 @@ curl.exe -N http://127.0.0.1:8787/api/chat/stream
 ```
 
 出站消息带 `id`：`main`（主会话）、`system`（系统提示）、`unit`（子会话上报）。
+
+### 主会话的「人话」输出（voice）
+
+主会话每轮（或按设置的「每 N 轮」）会输出一句 `voice`：此刻的用意、看法、判断、情绪，
+**不是** JSON/参数/报告。它同时出现在：
+
+- 聊天出站：`GET /api/chat/poll` / SSE，`kind = "voice"`；
+- 专门的语音接口：
+
+```powershell
+# 最近一句
+Invoke-RestMethod http://127.0.0.1:8787/api/voice/latest
+
+# 轮询（since 用上次的 id）
+$v = Invoke-RestMethod 'http://127.0.0.1:8787/api/voice?since='
+$v.voices | ForEach-Object { $_.text }
+```
+
+返回示例：
+
+```json
+{
+  "id": "v-1793375259718-1",
+  "text": "他们以为我们不敢动手，那就让他们继续以为。",
+  "mood": "冷静",
+  "intent": "试探并推进科研",
+  "turn": 3,
+  "actions": ["research"]
+}
+```
+
+外部 TTS/直播只要读 `text`（可选 `mood` 选音色）。文件落在
+`%USERPROFILE%\.stellaris-agent\voice\`（按天 JSONL + `latest.json`）。
+
+控制频率：人格页「启用“人话”」、每 N 轮、最短间隔（秒）；直接对话 `ask` 会强制说一句。
 
 ### 直接问主会话（同步接口）
 
@@ -306,6 +348,10 @@ latest.json / latest.md                     最近一次
 .\run.cmd session main           # 某个会话的完整对话
 .\run.cmd failures               # 最近失败的子会话报告
 .\run.cmd failure latest         # 看一份失败报告（--markdown 看人读版）
+.\run.cmd persona                # 查看人格/属性/组件
+.\run.cmd persona preset conqueror
+.\run.cmd persona import .\ash-card.json
+.\run.cmd voice --limit 10       # 主会话最近说的“人话”
 .\run.cmd execute '<json>'
 .\run.cmd call get_status        # 原始 RPC（排障）
 .\run.cmd pause | resume
@@ -329,6 +375,7 @@ latest.json / latest.md                     最近一次
 | DSH 端口缓存 | 同目录 `dsh-url.json` |
 | 决策/上报日志 | 同目录 `journal\YYYY-MM-DD.jsonl` |
 | 失败报告 | 同目录 `failures\*.json` / `*.md`（`latest.md` 最近一份） |
+| 主会话人话 | 同目录 `voice\YYYY-MM-DD.jsonl` / `latest.json` |
 | 诊断包 | 设置页「导出诊断」→ `diagnostics-*.json` |
 
 ---

@@ -21,6 +21,7 @@ import { readFileSync } from 'node:fs'
 import { describeActions } from './actions.mjs'
 import { logFile } from './logger.mjs'
 import { redactConfig } from './app.mjs'
+import { applyPreset, mergeImportedPersona, parsePersonaImport } from './persona.mjs'
 
 const VERSION = '2.0.0'
 
@@ -348,6 +349,54 @@ export function startServer({ app, log = () => {} }) {
         const body = await readBody(req)
         if (typeof body?.objective !== 'string') return fail(res, 400, 'EXPECTED_OBJECTIVE')
         return json(res, 200, requireOrchestrator().setObjective(body.objective))
+      }
+
+      // ---------------------------------------------------------------- 人格 / 人话
+      if (method === 'GET' && path === '/api/persona') {
+        return json(res, 200, { ok: true, ...app.personaInfo() })
+      }
+      if (method === 'POST' && path === '/api/persona') {
+        const body = await readBody(req)
+        const persona = body?.persona ?? body
+        if (!persona || typeof persona !== 'object') return fail(res, 400, 'EXPECTED_PERSONA')
+        return json(res, 200, { ok: true, ...(await app.setPersona(persona)) })
+      }
+      if (method === 'POST' && path === '/api/persona/preset') {
+        const body = await readBody(req)
+        const id = String(body?.id || '').trim()
+        if (!id) return fail(res, 400, 'EXPECTED_PRESET_ID')
+        const current = app.personaInfo().raw
+        return json(res, 200, { ok: true, ...(await app.setPersona(applyPreset(current, id))) })
+      }
+      if (method === 'POST' && path === '/api/persona/import') {
+        const body = await readBody(req)
+        const text = String(body?.text || '')
+        if (!text.trim()) return fail(res, 400, 'EXPECTED_TEXT')
+        const imported = parsePersonaImport(text, {
+          name: body?.name || '',
+          filename: body?.filename || '',
+          base: app.personaInfo().raw,
+        })
+        if (!imported.ok) return fail(res, 422, imported.error || 'IMPORT_FAILED')
+        const next = mergeImportedPersona(app.personaInfo().raw, imported, { applyFields: body?.applyFields !== false })
+        return json(res, 200, { ok: true, format: imported.format, component: imported.component, ...(await app.setPersona(next)) })
+      }
+      if (method === 'POST' && path === '/api/persona/component/remove') {
+        const body = await readBody(req)
+        const id = String(body?.id || '').trim()
+        if (!id) return fail(res, 400, 'EXPECTED_ID')
+        const current = app.personaInfo().raw
+        current.components = (current.components || []).filter((row) => row.id !== id)
+        return json(res, 200, { ok: true, ...(await app.setPersona(current)) })
+      }
+      if (method === 'GET' && path === '/api/voice') {
+        const since = url.searchParams.get('since') || ''
+        const limit = Number(url.searchParams.get('limit')) || 50
+        return json(res, 200, { ok: true, ...app.voices({ since, limit }) })
+      }
+      if (method === 'GET' && path === '/api/voice/latest') {
+        const info = app.voices({ limit: 1 })
+        return json(res, 200, { ok: true, voice: info.latest, dir: info.dir })
       }
 
       // ---------------------------------------------------------------- 主会话直连

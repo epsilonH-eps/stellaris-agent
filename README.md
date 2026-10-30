@@ -37,6 +37,8 @@
 - **底部常驻**：`大模型: 已连接 / 未连接（原因）` 与 `游戏: 已连接 2200.01.01 / 未连接（原因）`，颜色区分，悬停看详情；
 - **「主会话」页**：主会话的状态摘要 + 完整对话（它在看什么、决定了什么、派发了谁）；
 - **「子会话」页**：顶部下拉框选择单位或特殊事件，下面展示该会话的摘要 + 完整对话；
+- **「人格」页**：10 条滑动条调 AI 属性（侵略性/大胆/谨慎/荣誉/外交/扩张/经济/科研/军事/共情），可套预设、导入 Character Card V2 / JSON / Markdown 人格组件；
+- **主会话「人话」**：每轮输出 `voice`（用意/看法/情绪），写 `~/.stellaris-agent/voice`，`GET /api/voice` 可给 TTS/直播直接消费；
 - **失败可见**：子会话最终失败会自动导出 JSON + Markdown（原因/建议/逐次尝试/会话现场）到 `~/.stellaris-agent/failures`，界面、HTTP 接口、CLI 都能查；
 - **自动连接**：程序启动后由看护循环负责——游戏在跑就注入原生桥，进局就自动接管；游戏重启后自动续上。
 
@@ -237,7 +239,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（92 项）
+test/                       node:test（105 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```

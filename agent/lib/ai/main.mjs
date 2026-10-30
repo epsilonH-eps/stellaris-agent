@@ -14,6 +14,9 @@
  * @module stellaris-agent/ai/main
  */
 import { worldDigest, clip } from '../context.mjs'
+import { agentHome } from '../config.mjs'
+import { normalizePersona, personaSummary, personaPrompt as buildPersonaPrompt } from '../persona.mjs'
+import { VoiceLog } from '../voice.mjs'
 import { AISession } from './session.mjs'
 import { mainSystemPrompt } from './prompts.mjs'
 import { parseMainDecision } from './protocol.mjs'
@@ -33,11 +36,16 @@ export class MainSession {
    * @param {Function} [options.log]
    * @param {object} [options.journal]
    */
-  constructor({ backend, config, executor, chat, getWorld, getUnits, getCompletions, dispatch, setInterval = () => {}, log = () => {}, journal = null }) {
+  constructor({ backend, config, executor, chat, getWorld, getUnits, getCompletions, dispatch, setInterval = () => {}, log = () => {}, journal = null, home = null }) {
     this.backend = backend
     this.config = config
     this.executor = executor
     this.chat = chat
+    this.home = home || agentHome()
+    this.persona = normalizePersona(config?.persona)
+    this.voices = new VoiceLog({ home: this.home, log })
+    this.lastVoice = null
+    this.lastVoiceAt = 0
     this.getWorld = getWorld
     this.getUnits = getUnits
     this.getCompletions = getCompletions
@@ -64,7 +72,23 @@ export class MainSession {
 
   setObjective(objective) {
     this.objective = String(objective || '')
-    this.session.system = mainSystemPrompt({ config: { ...this.config, objective: this.objective }, units: this.getUnits() })
+    this.session.system = mainSystemPrompt({
+      config: { ...this.config, objective: this.objective, persona: this.persona },
+      units: this.getUnits(),
+    })
+  }
+
+  /** 设置页/接口修改人格后，立即重建 system prompt（不用重启调度）。 */
+  applyPersona(persona) {
+    this.persona = normalizePersona(persona, this.persona)
+    this.setObjective(this.objective)
+    this.log('main.persona.applied', { name: this.persona.name, preset: this.persona.preset, components: this.persona.components.length })
+    return personaSummary(this.persona)
+  }
+
+  /** 主会话 system prompt 里的人格段（设置页预览用）。 */
+  personaPrompt() {
+    return buildPersonaPrompt(this.persona)
   }
 
   /** 子会话的上报进入下一轮上下文。 */
@@ -101,6 +125,16 @@ export class MainSession {
       pendingReports: this.reports.length,
       pendingObservations: this.observations.length,
       usage: this.session.lastUsage,
+      persona: {
+        name: this.persona.name,
+        title: this.persona.title,
+        preset: this.persona.preset,
+        traits: this.persona.traits,
+        voice: this.persona.voice,
+        components: this.persona.components.length,
+      },
+      lastVoice: this.lastVoice,
+      voiceCount: this.voices.rows.length,
     }
   }
 
@@ -111,7 +145,7 @@ export class MainSession {
       kind: 'main',
       type: 'main',
       label: '主会话',
-      name: '总指挥',
+      name: this.persona.name,
       running: this.ticking,
       status: this.lastError ? 'error' : this.lastDecision ? 'ok' : 'idle',
       turns: this.session.turns,
@@ -210,6 +244,7 @@ export class MainSession {
       }
       const decision = parsed.value
       const applied = await this._apply(decision)
+      const voice = this._emitVoice(decision, { reason })
       this.lastDecision = { ...decision, at: Date.now(), applied }
       this.lastTickAt = Date.now()
       this.lastError = null
@@ -217,10 +252,10 @@ export class MainSession {
       this.journal?.append({
         kind: 'main.decision',
         text: decision.say || decision.report || '(no say)',
-        meta: { reason, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, ms: Date.now() - startedAt },
+        meta: { reason, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, voice: voice?.id || null, ms: Date.now() - startedAt },
       })
-      this.log('main.tick', { reason, spawned: applied.spawned.length, say: Boolean(decision.say), ms: Date.now() - startedAt })
-      return { ok: true, reason, say: decision.say, spawned: applied.spawned, paused: applied.paused, resumed: applied.resumed }
+      this.log('main.tick', { reason, spawned: applied.spawned.length, say: Boolean(decision.say), voice: Boolean(voice), ms: Date.now() - startedAt })
+      return { ok: true, reason, say: decision.say, voice, spawned: applied.spawned, paused: applied.paused, resumed: applied.resumed }
     } catch (error) {
       this.lastError = String(error?.message || error)
       this.log('main.tick.failed', { error: this.lastError })
@@ -273,6 +308,7 @@ export class MainSession {
       }
       const decision = parsed.value
       const applied = await this._apply(decision)
+      const voice = this._emitVoice(decision, { reason: 'human-ask', force: true })
       this.lastDecision = { ...decision, at: Date.now(), applied }
       this.lastTickAt = Date.now()
       this.lastError = null
@@ -280,14 +316,15 @@ export class MainSession {
       this.journal?.append({
         kind: 'main.ask',
         text: decision.say || '(no say)',
-        meta: { id, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, ms: Date.now() - startedAt },
+        meta: { id, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, voice: voice?.id || null, ms: Date.now() - startedAt },
       })
-      this.log('main.ask', { id, say: Boolean(decision.say), spawned: applied.spawned.length, ms: Date.now() - startedAt })
+      this.log('main.ask', { id, say: Boolean(decision.say), spawned: applied.spawned.length, voice: Boolean(voice), ms: Date.now() - startedAt })
       return {
         ok: true,
         id,
         text: message,
         say: decision.say,
+        voice,
         report: decision.report,
         spawned: applied.spawned,
         skipped: applied.skipped,
@@ -302,6 +339,46 @@ export class MainSession {
     } finally {
       this.ticking = false
     }
+  }
+
+  /** 每轮（或按频率）说一句"人话"，写进 VoiceLog + 聊天出站 + 回调。 */
+  _emitVoice(decision, { reason = 'tick', force = false } = {}) {
+    const setting = this.persona.voice || {}
+    if (setting.enabled === false) return null
+    const explicit = String(decision.voice || '').trim()
+    const raw = explicit || String(decision.say || '').trim()
+    if (!raw) return null
+    const every = Math.max(1, Number(setting.everyTurns) || 1)
+    const minMs = Math.max(0, Number(setting.minIntervalSeconds) || 0) * 1000
+    const turn = this.turns + 1
+    if (!force) {
+      if (every > 1 && turn % every !== 0) return null
+      if (minMs && Date.now() - this.lastVoiceAt < minMs) return null
+    }
+    const maxChars = Math.max(20, Number(this.persona.speech?.maxChars) || 120)
+    const text = raw.length > maxChars ? `${raw.slice(0, maxChars - 1)}…` : raw
+    const entry = this.voices.push({
+      text,
+      mood: decision.mood,
+      intent: decision.intent,
+      turn,
+      reason,
+      actions: (decision.spawn || []).map((row) => row.unit),
+    })
+    if (!entry) return null
+    this.lastVoice = entry
+    this.lastVoiceAt = Date.now()
+    // 没有独立 voice、退回 say 时，聊天里已经发过 say，不再重复发一条
+    if (explicit) {
+      this.chat?.outbound({ text, id: 'main', kind: 'voice', meta: { voiceId: entry.id, mood: entry.mood, intent: entry.intent } })
+    }
+    try {
+      this.onVoice?.(entry)
+    } catch {
+      /* 外部订阅失败不影响主循环 */
+    }
+    this.log('main.voice', { id: entry.id, chars: text.length, reason })
+    return entry
   }
 
   async _apply(decision) {
