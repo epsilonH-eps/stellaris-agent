@@ -168,6 +168,7 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
     }
     if (req.method === 'POST' && url.pathname === '/api/swarm/start') {
       const body = await readBody(req)
+      if (!orchestrator) return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' })
       if (swarm) return json(res, 200, { ok: true, already: true, status: swarm.status() })
       try {
         const config = { ...config, swarm: { ...(config.swarm || {}), ...(body?.objective ? { objective: String(body.objective) } : {}) } }
@@ -241,6 +242,7 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       }
     }
     if (req.method === 'POST' && url.pathname === '/api/ask') {
+      if (!orchestrator) return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' })
       const body = await readBody(req)
       if (!body || typeof body.text !== 'string') return json(res, 400, { error: 'expected { text }' })
       if (busy) return json(res, 409, { error: '上一轮还没跑完' })

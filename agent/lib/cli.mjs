@@ -108,7 +108,7 @@ export async function run(argv) {
   }
   const engine = new Engine({ config, home: agentHome(), log }).init()
 
-  const needsApi = ['ask', 'chat', 'serve', 'swarm'].includes(command) || (command === 'selftest' && Boolean(flags.online))
+  const needsApi = ['ask', 'chat', 'swarm'].includes(command) || (command === 'selftest' && Boolean(flags.online))
   let client = null
   let orchestrator = null
   const bus = config.liveChat?.enabled === false ? null : createBus(config.liveChat)
@@ -303,6 +303,11 @@ export async function run(argv) {
         } finally {
           bridge.pipe.close()
         }
+      }
+      case 'init': {
+        const file = configFile()
+        out(pretty({ ok: true, home: agentHome(), config: file, hint: '已生成默认配置；在 GUI 或 config.json 填 deepseek.apiKey' }))
+        return 0
       }
       case 'status': {
         out(pretty(engine.status()))

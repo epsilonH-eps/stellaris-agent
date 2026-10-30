@@ -27,7 +27,24 @@ docs/                   协议、动作、DSH 后端、调度说明
 scripts/                构建 / 打包 / 安装脚本
 run.cmd                 CLI 启动器
 run-gui.cmd             GUI 启动器
+init.cmd                首次运行：生成配置目录与 config.json
 StellarisAgent.exe      构建产物（git 忽略）
+```
+
+## 首次运行 / 初始化
+
+首次启动会自动创建：
+
+```
+C:\Users\<你>\.stellaris-agent\config.json
+```
+
+如果目录不存在，GUI 会先建目录并从 `agent/config.example.json` 生成默认配置；即使还没填 API Key，也能先进入主界面，在「设置」页填写。
+
+命令行也可以手动初始化：
+
+```powershell
+.\init.cmd
 ```
 
 ## 快速开始

@@ -65,7 +65,14 @@ if (-not $node -and -not $SelfTest) {
 $base = "http://127.0.0.1:$Port"
 $token = ''
 $cfg = $null
-$configFile = Join-Path $env:USERPROFILE '.stellaris-agent\config.json'
+$agentHome = if ($env:STELLARIS_AGENT_HOME) { $env:STELLARIS_AGENT_HOME } else { Join-Path $env:USERPROFILE '.stellaris-agent' }
+$configFile = Join-Path $agentHome 'config.json'
+if (-not (Test-Path $agentHome)) { New-Item -ItemType Directory -Force $agentHome | Out-Null }
+if (-not (Test-Path $configFile)) {
+  $example = Join-Path $root 'config.example.json'
+  if (Test-Path $example) { Copy-Item $example $configFile -Force }
+  else { Set-Content -Path $configFile -Value '{}' -Encoding utf8 }
+}
 if (Test-Path $configFile) {
   try {
     $cfg = Get-Content $configFile -Raw | ConvertFrom-Json
@@ -177,6 +184,7 @@ function Save-BackendChoice($choice) {
     if (-not $obj.PSObject.Properties['deepseek']) { $obj | Add-Member -NotePropertyName deepseek -NotePropertyValue ([pscustomobject]@{}) -Force }
     $obj.deepseek | Add-Member -NotePropertyName apiKey -NotePropertyValue $choice.apiKey -Force
   }
+  New-Item -ItemType Directory -Force (Split-Path $configFile -Parent) | Out-Null
   $obj | ConvertTo-Json -Depth 20 | Set-Content $configFile -Encoding utf8
 }
 
@@ -189,6 +197,7 @@ function Save-DeepSeekKey($key) {
   if (-not $obj) { $obj = [pscustomobject]@{} }
   if (-not $obj.PSObject.Properties['deepseek']) { $obj | Add-Member -NotePropertyName deepseek -NotePropertyValue ([pscustomobject]@{}) -Force }
   $obj.deepseek | Add-Member -NotePropertyName apiKey -NotePropertyValue $key -Force
+  New-Item -ItemType Directory -Force (Split-Path $configFile -Parent) | Out-Null
   $obj | ConvertTo-Json -Depth 20 | Set-Content $configFile -Encoding utf8
 }
 
