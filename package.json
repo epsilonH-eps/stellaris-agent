@@ -1,21 +1,27 @@
 {
   "name": "stellaris-agent",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "群星参谋：把 Stellaris 4.5 的状态读出来，交给 DeepSeek/DSH 推理，再通过原生桥执行操作。",
+  "description": "群星参谋 v2：原生桥读取/操控《群星 4.5》，主会话推理、子会话执行，支持 DeepSeek API 与 DSH 插件两种思考后端。",
   "type": "module",
   "scripts": {
-    "gui": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/gui/StellarisAgent.ps1",
+    "gui": "powershell -NoProfile -STA -ExecutionPolicy Bypass -File agent/gui/StellarisAgent.ps1",
+    "serve": "node agent/bin/stellaris-agent.mjs serve",
+    "test": "node --test test/*.test.mjs",
+    "actions": "node agent/bin/stellaris-agent.mjs actions",
+    "doctor": "node agent/bin/stellaris-agent.mjs doctor",
+    "plugin:install": "node agent/bin/stellaris-agent.mjs plugin install",
+    "plugin:update": "node agent/bin/stellaris-agent.mjs plugin update",
     "build:node": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/bundle-node.ps1",
     "build:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1",
-    "install:dsh": "powershell -NoProfile -ExecutionPolicy Bypass -File dsh-stellaris-bridge/install.ps1"
+    "install:dsh": "node agent/bin/stellaris-agent.mjs plugin install"
   },
   "keywords": [
     "stellaris",
     "deepseek",
     "dsh",
-    "stellaris",
-    "ai"
+    "ai",
+    "native-bridge"
   ],
   "license": "MIT",
   "engines": {

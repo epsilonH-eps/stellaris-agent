@@ -6,19 +6,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  syntax:
+  test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: node --check
+      - name: syntax check
         shell: pwsh
         run: |
           $bad = 0
           Get-ChildItem -Recurse -File | Where-Object { $_.Extension -in '.mjs','.js' } |
-            Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\|\\runtime\\' } |
             ForEach-Object {
               node --check $_.FullName
               if ($LASTEXITCODE -ne 0) { $bad++; Write-Host "FAIL $($_.FullName)" }
@@ -30,3 +30,17 @@ jobs:
           Get-ChildItem -Recurse -File -Filter *.json |
             Where-Object { $_.FullName -notmatch '\\node_modules\\|\\runtime\\' } |
             ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json | Out-Null }
+      - name: unit tests
+        shell: pwsh
+        run: node --test test/*.test.mjs
+      - name: actions doc is up to date
+        shell: pwsh
+        run: |
+          node tools/gen-actions-doc.mjs
+          if (git status --porcelain docs/ACTION-CATALOG.md) {
+            Write-Host 'docs/ACTION-CATALOG.md 与代码不一致；请运行 node tools/gen-actions-doc.mjs 并提交'
+            exit 1
+          }
+      - name: gui parses
+        shell: pwsh
+        run: powershell -NoProfile -STA -ExecutionPolicy Bypass -File agent/gui/StellarisAgent.ps1 -SelfTest

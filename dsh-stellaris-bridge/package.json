@@ -1,13 +1,19 @@
 {
   "name": "dsh-stellaris-bridge",
-  "version": "0.1.0",
-  "description": "DSH 侧编排后端：让群星参谋程序把主会话/组件子会话交给 DSH 运行。",
+  "version": "2.1.0",
+  "description": "DSH 侧编排后端：在固定端口 127.0.0.1:49939 提供 /run /team /health，并兼容 DSH Web 路由。",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
     "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "install.ps1"
+  ],
   "keywords": [
     "dsh",
     "dsh-plugin",

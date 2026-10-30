@@ -1,65 +1,68 @@
 /**
- * CLI：独立软件的唯一入口。
+ * CLI：读类命令不需要 API Key；写类命令一律走执行器。
  *
- * 设计原则：
- *   - 不需要 DSH，不需要 Electron；一个 node 进程 + 一个终端就够；
- *   - 读类命令（status/brief/scan/designs/events/journal）不用 API key；
- *   - 思考类命令（ask/chat/serve）才需要 DeepSeek key；
- *   - `--offline` 永远不联网，方便排障。
+ *   stellaris-agent status                目录/桥/AI/插件
+ *   stellaris-agent read [--quick]        全量读取（含模组、事件链、存档 meta）
+ *   stellaris-agent actions [--unit x]    动作列表（Y 条）
+ *   stellaris-agent units                 可控单位清单
+ *   stellaris-agent events active|search|chain
+ *   stellaris-agent mods                  已启用模组
+ *   stellaris-agent execute '<json>'      直接执行动作
+ *   stellaris-agent call <method> [json]  原始 RPC（排障）
+ *   stellaris-agent run [--once]          启动编排（主会话+子会话+执行器）
+ *   stellaris-agent serve [--port]        本地 HTTP
+ *   stellaris-agent plugin install|update|reload|status
+ *   stellaris-agent doctor                自检
  *
  * @module stellaris-agent/cli
  */
-import { createInterface } from 'node:readline/promises'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { stdin, stdout } from 'node:process'
+import { stdout } from 'node:process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { agentHome, configFile, loadConfig, requireApiKey } from './config.mjs'
-import { DeepSeekClient } from './deepseek.mjs'
-import { Engine } from './engine.mjs'
-import { Orchestrator } from './orchestrator.mjs'
-import { createBus } from './bus.mjs'
+import { App } from './app.mjs'
+import { agentHome, configFile } from './config.mjs'
 import { startServer } from './server.mjs'
-import { Scheduler } from './scheduler.mjs'
-import { Swarm } from './swarm.mjs'
-import { ensureNativeBridge } from './native-bridge.mjs'
-import { readAll, summarize } from './native-reader.mjs'
-import { runSteps } from './native-operator.mjs'
-import { NATIVE_WRITE_ACTIONS, auditAgainstDsl } from './native-actions.mjs'
-import { buildChains, saveChains, loadChains, chainOf } from './event-chains.mjs'
-import { CATALOGUE } from '../../engine/lib/actions.js'
-import { discoverDshUrl } from './dsh-discovery.mjs'
+import { ensureBridge, findGameProcess } from './bridge.mjs'
+import { Reader } from './reader.mjs'
+import { EventGraph } from './events.mjs'
+import { listMods } from './mods.mjs'
+import { discoverDsh } from './ai/dsh.mjs'
+import { checkBackend, createBackend } from './ai/backend.mjs'
+import { describeActions, validateActions } from './actions.mjs'
+import { discoverUnits } from './context.mjs'
+import { installPlugin, pluginVersions, reloadDsh } from './dsh-plugin.mjs'
 import { createLogger } from './logger.mjs'
-import { findGameProcess } from './native-bridge.mjs'
-import { listVerbs, runVerb } from './native-verbs.mjs'
 
 const execFileAsync = promisify(execFile)
 
-const HELP = `群星参谋 · 独立版
+const HELP = `群星参谋 v2
 
 用法：
-  stellaris-agent status                 连接/模组/快照/目录
-  stellaris-agent brief [--budget 5000]  战局简报
-  stellaris-agent refresh [--wait 2500]  让阅读模组立刻导出一份（等价控制台 event dsh_reader.9）
-  stellaris-agent scan [--force]         解析最新存档（全量数据）
-  stellaris-agent setup                  创建阶段：设计文件 + 安装目录
-  stellaris-agent designs [名字]         读创建界面里的自定义帝国
-  stellaris-agent events <事件id> [--depth 2]   事件后续
-  stellaris-agent journal [--limit 40]   这一局的日志
-  stellaris-agent ask "目标" [--read-only] [--no-tools] [--steps N]
-  stellaris-agent chat [--read-only]     交互式
-  stellaris-agent serve [--port 8787]    本地面板 + 直播接口
-  stellaris-agent validate [--game-dir D] 对 4.5 校验两个模组
-  stellaris-agent selftest [--online]    自检（--online 会真调一次 API）
+  stellaris-agent status                 连接/AI/插件/路径
+  stellaris-agent read [--quick] [--out f]  全量读取（默认含存档 meta）
+  stellaris-agent actions [--unit planet]    列出动作（操控器动作表）
+  stellaris-agent units                   发现可控单位（1:1 子会话对象）
+  stellaris-agent events active           已激活事件链（含后续）
+  stellaris-agent events index [--force]  重建事件索引（原版+DLC+模组，不需要游戏）
+  stellaris-agent events search <q>       搜事件
+  stellaris-agent events chain <id>       看某事件后续
+  stellaris-agent mods                    已启用模组（本地/工坊/DLC）
+  stellaris-agent connect                立即连接（必要时注入）并按配置接管
+  stellaris-agent sessions               会话列表（主会话 + 子会话）
+  stellaris-agent session <id>           某个会话的完整对话
+  stellaris-agent execute '<json>' [--unit x]  执行动作
+  stellaris-agent call <method> [json]   原始 RPC
+  stellaris-agent run [--objective "..."] [--once]
+  stellaris-agent serve [--port 8787]
+  stellaris-agent pause | resume
+  stellaris-agent plugin install|update|reload|status [--profile <dir>]
+  stellaris-agent dsh-discover
+  stellaris-agent doctor
+  stellaris-agent selftest
 
-常用参数：
-  --read-only     只读：不执行任何写操作
-  --no-tools      不用 function calling，走三反引号 stellaris 块
-  --offline       完全不联网（读类命令默认就不联网）
-  --config <file> 用另一份配置
-
-配置文件：${configFile()}
+配置：${configFile()}
 `
 
 function parse(argv) {
@@ -86,11 +89,46 @@ function parse(argv) {
 }
 
 function out(text = '') {
-  stdout.write(text + '\n')
+  stdout.write(String(text) + '\n')
 }
 
 function pretty(value) {
   return JSON.stringify(value, null, 2)
+}
+
+/** 只读一次世界（不启动编排器、不需要 API Key）。 */
+async function readOnce(app, { deep = true, includeSave = true } = {}) {
+  const bridgeResult = await ensureBridge({ config: app.config, log: app.log })
+  if (!bridgeResult.ok) {
+    const error = new Error(`原生桥不可用：${bridgeResult.error}`)
+    error.code = bridgeResult.error
+    error.detail = bridgeResult.detail
+    throw error
+  }
+  const paths = app.paths
+  const mods = listMods({ userDir: paths.userDir || '', installDir: paths.installDir || '' })
+  const graph = new EventGraph({
+    home: app.home,
+    installDir: paths.installDir || '',
+    modEventDirs: mods.eventDirs,
+    log: app.log,
+  }).build()
+  const reader = new Reader({ bridge: bridgeResult.client, config: app.config, home: app.home, log: app.log, paths })
+  const world = await reader.readWorld({ deep, includeSave, eventGraph: graph, paths })
+  return { world, graph, mods, bridge: bridgeResult }
+}
+
+/** 只建事件索引（不需要游戏在跑）。 */
+function graphOnly(app, { force = false } = {}) {
+  const paths = app.paths
+  const mods = listMods({ userDir: paths.userDir || '', installDir: paths.installDir || '' })
+  const graph = new EventGraph({
+    home: app.home,
+    installDir: paths.installDir || '',
+    modEventDirs: mods.eventDirs,
+    log: app.log,
+  }).build({ force })
+  return { graph, mods, paths }
 }
 
 export async function run(argv) {
@@ -100,419 +138,325 @@ export async function run(argv) {
     return 0
   }
 
-  const { config } = loadConfig()
-  if (flags.model) config.deepseek = { ...(config.deepseek || {}), model: String(flags.model) }
-  if (flags.port) config.liveChat = { ...(config.liveChat || {}), port: Number(flags.port) }
-  if (flags.readonly || flags['read-only']) config.__readOnly = true
-
-  mkdirSync(agentHome(), { recursive: true })
-  const log = createLogger(command)
-  log('command.start', { command, args: positional })
-  const engine = new Engine({ config, home: agentHome(), log }).init()
-
-  const needsApi = ['ask', 'chat', 'swarm'].includes(command) || (command === 'selftest' && Boolean(flags.online))
-  let client = null
-  let orchestrator = null
-  const bus = config.liveChat?.enabled === false ? null : createBus(config.liveChat)
-  if (needsApi) {
-    if (flags.offline) {
-      out('--offline 下不能使用思考类命令')
-      return 2
-    }
-    const apiKey = requireApiKey(config)
-    client = new DeepSeekClient({
-      apiKey,
-      baseUrl: config.deepseek?.baseUrl,
-      model: config.deepseek?.model,
-      timeoutMs: config.deepseek?.timeoutMs,
-    })
-    orchestrator = new Orchestrator({ client, engine, config, log, bus })
+  const app = new App({ home: agentHome(), log: createLogger(command) })
+  if (flags.config) {
+    out('提示：配置文件位置由 STELLARIS_AGENT_HOME 决定，--config 已废弃。')
   }
+  if (flags.port) app.config.chat.port = Number(flags.port)
+  if (app.configError) {
+    out(app.configError)
+    return 1
+  }
+  mkdirSync(agentHome(), { recursive: true })
 
   try {
     switch (command) {
-      case 'swarm': {
-        const swarmConfig = {
-          ...config,
-          swarm: {
-            ...(config.swarm || {}),
-            ...(flags.tick ? { tickSeconds: Number(flags.tick) } : {}),
-            ...(flags['main-tick'] ? { mainTickSeconds: Number(flags['main-tick']) } : {}),
-            ...(flags.queue ? { queuePauseThreshold: Number(flags.queue) } : {}),
-            planOnly: Boolean(flags['plan-only']),
-            ...(flags.goal ? { objective: String(flags.goal) } : {}),
-            ...(flags.backend ? { backend: String(flags.backend) } : {}),
-            ...(flags['dsh-url'] ? { dshUrl: String(flags['dsh-url']) } : {}),
-          },
-        }
-        if ((swarmConfig.swarm.backend === 'dsh') && !flags['dsh-url']) {
-          try {
-            const found = await discoverDshUrl()
-            if (found.ok) swarmConfig.swarm.dshUrl = found.url
-          } catch {}
-        }
-        const swarm = new Swarm({ engine, orchestrator, config: swarmConfig, log })
-        const started = await swarm.start({ once: Boolean(flags.once) })
-        if (!started.ok) { out(pretty(started)); return 1 }
-        out(pretty(started))
-        out(pretty(swarm.status()))
-        if (flags.once) { swarm.stop(); return 0 }
-        await new Promise((resolve) => {
-          const stop = () => { swarm.stop(); resolve() }
-          process.on('SIGINT', stop)
-          process.on('SIGTERM', stop)
-        })
-        return 0
-      }
-      case 'verbs': {
-        const groups = new Map()
-        for (const verb of listVerbs()) {
-          if (!groups.has(verb.category)) groups.set(verb.category, [])
-          groups.get(verb.category).push(verb)
-        }
-        for (const [category, rows] of groups) {
-          out(`[${category}]`)
-          for (const row of rows) out(`  ${row.verb}(${row.params.join(', ')})  ${row.help}`)
-        }
-        out('')
-        out(`共 ${listVerbs().length} 个原生动词`)
-        return 0
-      }
-      case 'do': {
-        const verb = positional.shift()
-        if (!verb) { out('用法：do <动词> <json参数>  或  do <动词> --file x.json'); return 2 }
-        let params = {}
-        if (flags.file) params = JSON.parse(readFileSync(String(flags.file), 'utf8'))
-        else if (positional.length) params = JSON.parse(positional.join(' '))
-        const bridge = await ensureNativeBridge({ log })
-        if (!bridge.ok) { out(pretty(bridge)); return 1 }
-        try {
-          const result = await runVerb(bridge.pipe, verb, params, { attempts: Number(flags.attempts ?? 5), log })
-          out(pretty(result))
-          return result.ok ? 0 : 1
-        } finally {
-          bridge.pipe.close()
-        }
-      }
-      case 'native-actions': {
-        const groups = new Map()
-        for (const row of NATIVE_WRITE_ACTIONS) {
-          if (!groups.has(row.category)) groups.set(row.category, [])
-          groups.get(row.category).push(row)
-        }
-        for (const [category, rows] of groups) {
-          out(`[${category}]`)
-          for (const row of rows) out(`  ${row.method}(${row.params.join(', ')})`)
-        }
-        out('')
-        out(`共 ${NATIVE_WRITE_ACTIONS.length} 个原生写动作`)
-        return 0
-      }
-      case 'native-audit': {
-        const audit = auditAgainstDsl(CATALOGUE)
-        out(pretty({
-          nativeWriteCount: audit.nativeWriteCount,
-          nativeReadCount: audit.nativeReadCount,
-          coveredByDsl: audit.covered,
-          gaps: audit.gaps.map((row) => ({ method: row.method, category: row.category, params: row.params })),
-          dslOnlyCount: audit.dslOnly.length,
-        }))
-        return 0
-      }
-      case 'events-index': {
-        const installDir = String(flags['game-dir'] || config.stellarisInstallDir || '')
-        if (!installDir) { out('需要 --game-dir 或 config.stellarisInstallDir'); return 2 }
-        const data = buildChains(installDir)
-        const file = join(agentHome(), 'event-chains.json')
-        saveChains(file, data)
-        out(pretty({ installDir, events: data.count, ...data.stats, file, sizeKB: Math.round(JSON.stringify(data).length / 1024) }))
-        return 0
-      }
-      case 'events-chain': {
-        const id = positional.shift()
-        if (!id) { out('用法：events-chain <event_id>'); return 2 }
-        const data = loadChains(join(agentHome(), 'event-chains.json'))
-        if (!data) { out('先跑 events-index'); return 2 }
-        out(pretty(chainOf(data, id, Number(flags.depth ?? 4))))
-        return 0
-      }
-      case 'events-search': {
-        const query = positional.join(' ')
-        if (!query) { out('用法：events-search <关键词>'); return 2 }
-        const data = loadChains(join(agentHome(), 'event-chains.json'))
-        if (!data) { out('先跑 events-index'); return 2 }
-        const lower = query.toLowerCase()
-        const hits = data.events.filter((event) => String(event.id).toLowerCase().includes(lower) || String(event.titleKey || '').toLowerCase().includes(lower)).slice(0, 30)
-        out(pretty({ query, hits }))
-        return 0
-      }
-      case 'native-read': {
-        const bridge = await ensureNativeBridge({ log })
-        if (!bridge.ok) { out(pretty(bridge)); return 1 }
-        try {
-          const data = await readAll(bridge.pipe, { log, deep: !flags.shallow })
-          const target = flags.out ? String(flags.out) : join(agentHome(), 'native-read.json')
-          writeFileSync(target, JSON.stringify(data, null, 2), 'utf8')
-          out(summarize(data))
-          out('')
-          out(`完整数据：${target}（${(JSON.stringify(data).length / 1024).toFixed(0)} KB）`)
-          return 0
-        } finally {
-          bridge.pipe.close()
-        }
-      }
-      case 'native-run': {
-        const file = positional.shift()
-        if (!file) { out('用法：native-run <steps.json>'); return 2 }
-        const payload = JSON.parse(readFileSync(file, 'utf8'))
-        const steps = Array.isArray(payload) ? payload : payload.steps
-        const bridge = await ensureNativeBridge({ log })
-        if (!bridge.ok) { out(pretty(bridge)); return 1 }
-        try {
-          const result = await runSteps(bridge.pipe, steps, {
-            attempts: Number(flags.attempts ?? 5),
-            log,
-            pause: flags.nopause ? false : true,
-          })
-          out(pretty(result))
-          return result.ok ? 0 : 1
-        } finally {
-          bridge.pipe.close()
-        }
-      }
-      case 'native-status': {
-        const bridge = await ensureNativeBridge({ log })
-        if (!bridge.ok) { out(pretty(bridge)); return 1 }
-        const s = bridge.status
-        out(pretty({
-          injectedNow: bridge.injected,
-          date: s.date?.formatted,
-          paused: s.is_paused,
-          inGame: s.in_game,
-          capital: s.outliner?.sectors_summary?.capital_system,
-          colonies: s.outliner?.sectors_summary?.total_colonies,
-          pops: s.outliner?.sectors_summary?.total_pops,
-          fleets: s.fleets,
-          resources: Object.fromEntries(Object.entries(s.resources || {}).slice(0, 6).map(([k, v]) => [k, { stock: v.stockpile, income: v.income, net: v.net }])),
-        }))
-        bridge.pipe.close()
-        return 0
-      }
-      case 'native-call': {
-        const method = positional.shift()
-        if (!method) { out('用法：native-call <method> [json]'); return 2 }
-        const params = positional.length ? JSON.parse(positional.join(' ')) : {}
-        const bridge = await ensureNativeBridge({ log })
-        if (!bridge.ok) { out(pretty(bridge)); return 1 }
-        try {
-          const result = await bridge.pipe.request(method, params)
-          out(pretty(result))
-          return 0
-        } finally {
-          bridge.pipe.close()
-        }
-      }
-      case 'doctor': {
-        const game = await findGameProcess()
-        let injection = null
-        if (game) {
-          const bridge = await ensureNativeBridge({ log })
-          injection = bridge.ok
-            ? { ok: true, injected: bridge.injected, date: bridge.status?.date?.formatted || null, inGame: Boolean(bridge.status?.in_game) }
-            : { ok: false, error: bridge.error, detail: bridge.detail || null }
-          try { bridge.pipe?.close() } catch {}
-        }
-        const dsh = await discoverDshUrl()
-        out(pretty({
-          home: agentHome(),
-          config: configFile(),
-          installDir: engine.status().installDir,
-          apiKey: Boolean(String(config.deepseek?.apiKey || '').trim()),
-          game,
-          injection,
-          dsh,
-        }))
-        return 0
-      }
-      case 'dsh-discover': {
-        out(pretty(await discoverDshUrl()))
-        return 0
-      }
       case 'init': {
-        const file = configFile()
-        out(pretty({ ok: true, home: agentHome(), config: file, hint: '已生成默认配置；在 GUI 或 config.json 填 deepseek.apiKey' }))
+        out(pretty({ ok: true, home: agentHome(), config: configFile(), hint: '在设置页或 config.json 填 ai.deepseek.apiKey' }))
         return 0
       }
       case 'status': {
-        out(pretty(engine.status()))
+        out(pretty(app.status()))
         return 0
       }
       case 'brief': {
-        out(engine.brief(Number(flags.budget ?? 6000)))
+        out(app.brief())
         return 0
       }
-      case 'refresh': {
-        if (flags.manual) config.injection = 'manual'
-        const result = await engine.refresh(Number(flags.wait ?? 2500))
-        out(pretty(result))
-        return result.ok ? 0 : 1
-      }
-      case 'scan': {
-        const result = await engine.saveScan(Boolean(flags.force))
-        if (!result.ok) {
-          out(pretty(result))
-          return 1
+      case 'read': {
+        const { world, graph, mods } = await readOnce(app, { deep: !flags.quick, includeSave: !flags['no-save'] })
+        if (flags.out) {
+          writeFileSync(String(flags.out), JSON.stringify({ world, mods }, null, 2), 'utf8')
+          out(`已写入 ${flags.out}`)
         }
-        out(pretty({ ok: true, cached: result.cached, meta: result.archive.meta, stats: result.archive.stats, warnings: result.archive.warnings }))
+        out(
+          pretty({
+            date: world.date,
+            inGame: world.inGame,
+            paused: world.paused,
+            colonies: world.colonies.length,
+            fleets: world.fleetsAll.length,
+            activeEvents: world.activeEvents.length,
+            eventChains: world.eventChains?.active?.length ?? 0,
+            eventIndex: graph.status(),
+            mods: { total: mods.total, enabled: mods.enabled },
+            save: world.save?.latest?.name || null,
+            calls: world.stats?.calls,
+            failed: world.errors?.length,
+            unsupported: world.unsupported,
+            ms: world.readMs,
+          }),
+        )
         return 0
       }
-      case 'setup': {
-        const designs = engine.designs()
-        out(pretty({
-          userDir: engine.dir,
-          installDir: engine.status().installDir,
-          designs: designs.ok ? { file: designs.file, count: designs.count, list: designs.designs } : designs,
-          saveSetup: engine.state.saveData?.meta ?? null,
-        }))
-        return 0
-      }
-      case 'designs': {
-        const read = engine.designs()
-        if (!read.ok) {
-          out(pretty(read))
-          return 1
+      case 'actions': {
+        const rows = describeActions({ unit: flags.unit || null })
+        if (flags.json) {
+          out(pretty(rows))
+          return 0
         }
-        const query = (positional[0] || '').toLowerCase()
-        const list = query ? read.designs.filter((d) => String(d.name || '').toLowerCase().includes(query)) : read.designs
-        out(pretty({ file: read.file, count: list.length, designs: list }))
+        const groups = new Map()
+        for (const row of rows) {
+          if (!groups.has(row.unit)) groups.set(row.unit, [])
+          groups.get(row.unit).push(row)
+        }
+        for (const [unit, group] of groups) {
+          out(`[${unit}]`)
+          for (const row of group) {
+            const params = row.params.map((param) => `${param.name}${param.required ? '' : '?'}:${param.type}`).join(', ')
+            out(`  ${row.method}(${params})${row.confidence === 'inferred' ? ' *' : ''}  ${row.desc}`)
+          }
+        }
+        out('')
+        out(`共 ${rows.length} 个动作（* = 参数为推断，首次失败会自动回报）`)
+        return 0
+      }
+      case 'units': {
+        const { world } = await readOnce(app, { deep: false, includeSave: false })
+        out(pretty(discoverUnits(world, app.config.units)))
         return 0
       }
       case 'events': {
-        const id = positional[0]
-        if (!id) {
-          out('用法：stellaris-agent events <事件id> [--depth 2]')
-          return 2
+        const sub = positional[0] || 'active'
+        if (sub === 'index') {
+          const { graph, mods } = graphOnly(app, { force: Boolean(flags.force) })
+          out(pretty({ ok: graph.status().ready, index: graph.status(), mods: { enabled: mods.enabled, dirs: mods.eventDirs } }))
+          return graph.status().ready ? 0 : 1
         }
-        out(pretty(engine.eventInfo(id, Number(flags.depth ?? 1))))
+        if (sub === 'search') {
+          const { graph } = graphOnly(app)
+          out(pretty(graph.search(positional.slice(1).join(' '), 30)))
+          return 0
+        }
+        if (sub === 'chain') {
+          const id = positional[1]
+          if (!id) {
+            out('用法：events chain <event_id> [--depth 6]')
+            return 2
+          }
+          const { graph } = graphOnly(app)
+          const chain = graph.successors(id, Number(flags.depth ?? 6))
+          if (!chain) {
+            out(`没有这个事件：${id}`)
+            return 1
+          }
+          out(pretty(chain))
+          return 0
+        }
+        const { world } = await readOnce(app, { deep: true, includeSave: false })
+        out(pretty(world.eventChains))
         return 0
       }
-      case 'journal': {
-        out(pretty(engine.journalRead(Number(flags.limit ?? 40))))
+      case 'mods': {
+        out(pretty(listMods({ userDir: app.paths.userDir || '', installDir: app.paths.installDir || '' })))
         return 0
       }
-      case 'ask': {
-        const goal = positional.join(' ').trim()
-        if (!goal) {
-          out('用法：stellaris-agent ask "目标"')
-          return 2
+      case 'connect': {
+        const result = await app.connect({ start: flags.start === true ? true : null })
+        out(pretty(result))
+        if (flags.watch) {
+          app.startWatcher()
+          out('看护中（自动注入/自动接管），Ctrl+C 退出。')
+          await new Promise((resolve) => {
+            process.once('SIGINT', resolve)
+            process.once('SIGTERM', resolve)
+          })
+          await app.stop({ resume: true })
         }
-        const result = await orchestrator.run({
-          goal,
-          allowWrite: !config.__readOnly,
-          useTools: flags['no-tools'] ? false : undefined,
-          maxSteps: Number(flags.steps ?? config.deepseek?.maxSteps ?? 8),
-          onEvent: (event) => {
-            if (event.type === 'tool') out(`  · 工具 ${event.name}`)
-            else if (event.type === 'actions') out(`  · 动作 ${event.text}`)
-          },
-        })
-        if (result.text) out('\n' + result.text)
-        out(`\n— ${result.steps} 步 · ${result.usage.totalTokens} tokens${result.applied.length ? ' · ' + result.applied.join('；') : ''}`)
         return result.ok ? 0 : 1
       }
-      case 'chat': {
-        const rl = createInterface({ input: stdin, output: stdout })
-        out('群星参谋已就绪。输入 /status /brief /scan /quit；其它内容当作目标。')
-        while (true) {
-          let line
-          try {
-            line = (await rl.question('\n> ')).trim()
-          } catch {
-            break
-          }
-          if (!line) continue
-          if (line === '/quit' || line === '/exit') break
-          if (line === '/status') {
-            out(pretty(engine.status()))
-            continue
-          }
-          if (line === '/brief') {
-            out(engine.brief(6000))
-            continue
-          }
-          if (line === '/scan') {
-            const scanned = await engine.saveScan(false)
-            out(pretty(scanned.ok ? { ok: true, stats: scanned.archive.stats } : scanned))
-            continue
-          }
-          const result = await orchestrator.run({
-            goal: line,
-            allowWrite: !config.__readOnly,
-            useTools: flags['no-tools'] ? false : undefined,
-            onEvent: (event) => {
-              if (event.type === 'tool') out(`  · 工具 ${event.name}`)
-            },
-          })
-          if (result.text) out('\n' + result.text)
-          out(`— ${result.usage.totalTokens} tokens`)
+      case 'sessions': {
+        if (!app.orchestrator) {
+          out('编排器未启动：先 `serve` / `run` / `connect`。')
+          return 1
         }
-        rl.close()
+        const rows = app.orchestrator.sessions()
+        for (const row of rows) {
+          const mark = row.running ? '●' : '○'
+          out(
+            `${mark} ${String(row.id).padEnd(18)} ${String(row.kind).padEnd(6)} ${String(row.status).padEnd(8)} turns=${String(row.turns).padEnd(3)} msgs=${String(row.messageCount).padEnd(3)} ${row.say || row.error || ''}`,
+          )
+        }
+        out('')
+        out(`共 ${rows.length} 个会话（main + 单位 + 特殊事件）`)
+        return 0
+      }
+      case 'session': {
+        const id = positional[0] || 'main'
+        if (!app.orchestrator) {
+          out('编排器未启动：先 `serve` / `run` / `connect`。')
+          return 1
+        }
+        const detail = app.orchestrator.sessionDetail(id)
+        if (!detail) {
+          out(`没有这个会话：${id}`)
+          return 1
+        }
+        out(`# ${detail.label}（${detail.id}）状态=${detail.status} turns=${detail.turns} 消息=${detail.messageCount}`)
+        out(`# 目标：${detail.objective || detail.goal || '-'}`)
+        if (detail.lastReport?.cause) out(`# 上次失败原因：${detail.lastReport.cause}`)
+        out(`# 系统提示（${detail.systemChars} 字符）`)
+        out(String(detail.system || '').slice(0, 1500))
+        for (const message of detail.messages) {
+          const who = message.role === 'assistant' ? 'AI' : message.role === 'user' ? '输入' : message.role
+          out('')
+          out(`[${who}]`)
+          out(message.content)
+        }
+        return 0
+      }
+      case 'execute': {
+        const payload = flags.file ? JSON.parse(readFileSync(String(flags.file), 'utf8')) : JSON.parse(positional.join(' ') || '[]')
+        const actions = Array.isArray(payload) ? payload : payload.actions
+        const validated = validateActions(actions)
+        if (!validated.ok) {
+          out(pretty({ ok: false, error: 'VALIDATION', errors: validated.errors }))
+          return 1
+        }
+        await app.start({ objective: app.config.objective })
+        const result = await app.orchestrator.execute(actions, { unit: String(flags.unit || 'cli') })
+        out(pretty(result))
+        await app.stop({ resume: false })
+        return result.ok ? 0 : 1
+      }
+      case 'call': {
+        const method = positional[0]
+        if (!method) {
+          out('用法：call <method> [json]')
+          return 2
+        }
+        const params = positional.length > 1 ? JSON.parse(positional.slice(1).join(' ')) : {}
+        const bridge = await ensureBridge({ config: app.config, log: app.log })
+        if (!bridge.ok) {
+          out(pretty(bridge))
+          return 1
+        }
+        out(pretty(await bridge.client.request(method, params)))
+        return 0
+      }
+      case 'pause':
+      case 'resume': {
+        await app.start({ objective: app.config.objective })
+        const result = command === 'pause' ? await app.orchestrator.pause() : await app.orchestrator.resume()
+        out(pretty(result))
+        await app.stop({ resume: false })
+        return 0
+      }
+      case 'run': {
+        const objective = flags.objective ? String(flags.objective) : app.config.objective
+        const status = await app.start({ objective })
+        out(pretty({ ok: true, world: status.orchestrator?.world, backend: status.orchestrator?.backend }))
+        if (flags.once) {
+          const result = await app.orchestrator.main?.tick({ reason: 'cli-once' })
+          out(pretty(result))
+          await app.stop({ resume: false })
+          return result?.ok ? 0 : 1
+        }
+        out('Ctrl+C 退出。')
+        await new Promise((resolve) => {
+          const stop = () => resolve()
+          process.once('SIGINT', stop)
+          process.once('SIGTERM', stop)
+        })
+        await app.stop({ resume: true })
         return 0
       }
       case 'serve': {
-        const handle = await startServer({ config, orchestrator, engine, bus, log: out })
-        out(`已启动：${handle.url}${config.liveChat?.token ? '（需要 token）' : ''}`)
-        out('Ctrl+C 退出。')
+        if (flags.port) app.config.chat.port = Number(flags.port)
+        const handle = await startServer({ app, log: (line, data) => {
+          out(data === undefined ? String(line) : `${line} ${JSON.stringify(data)}`)
+        } })
+        out(`已启动：${handle.url}${app.config.chat.token ? '（需要 token）' : ''}`)
+        if (flags.start) {
+          try {
+            await app.start({ objective: app.config.objective })
+            out('编排器已启动。')
+          } catch (error) {
+            out(`编排器启动失败：${error.message}`)
+          }
+        }
         await new Promise((resolve) => {
           process.once('SIGINT', resolve)
           process.once('SIGTERM', resolve)
         })
+        await app.stop({ resume: true })
         handle.close()
         return 0
       }
-      case 'validate': {
-        const script = new URL('../../tools/validate-mods.mjs', import.meta.url)
-        const argv = [script.pathname.replace(/^\//, '')]
-        if (flags['game-dir']) argv.push('--game-dir', String(flags['game-dir']))
-        try {
-          const { stdout } = await execFileAsync(process.execPath, argv, { timeout: 120000, windowsHide: true })
-          out(stdout.trim())
-          return 0
-        } catch (error) {
-          if (error?.stdout) out(String(error.stdout).trim())
-          else out(String(error?.message || error))
-          return 1
+      case 'plugin': {
+        const sub = positional[0] || 'status'
+        if (sub === 'install') {
+          const result = installPlugin({ profileDir: String(flags.profile || app.config.dshPlugin.profileDir || ''), copy: Boolean(flags.copy), log: app.log })
+          out(pretty(result))
+          return result.ok ? 0 : 1
         }
+        if (sub === 'update') {
+          out(pretty(await app.updatePlugin({ allowRestart: Boolean(flags.restart) })))
+          return 0
+        }
+        if (sub === 'reload') {
+          out(pretty(await reloadDsh({ config: app.config, log: app.log, allowRestart: Boolean(flags.restart) })))
+          return 0
+        }
+        out(pretty({ ok: true, ...pluginVersions(), profiles: pluginVersions() }))
+        return 0
+      }
+      case 'dsh-discover': {
+        out(pretty(await discoverDsh({ configuredUrl: app.config.ai.dsh.url })))
+        return 0
+      }
+      case 'doctor': {
+        const game = await findGameProcess().catch((error) => ({ error: String(error?.message || error) }))
+        const bridge = await ensureBridge({ config: app.config, log: app.log })
+        const backend = createBackend({ config: app.config, log: app.log })
+        const backendInfo = await checkBackend(backend)
+        const dsh = await discoverDsh({ configuredUrl: app.config.ai.dsh.url })
+        out(
+          pretty({
+            home: agentHome(),
+            config: configFile(),
+            paths: app.paths,
+            game,
+            bridge: bridge.ok
+              ? { ok: true, injected: bridge.injected, date: bridge.status?.date?.formatted || bridge.status?.date || null, inGame: Boolean(bridge.status?.in_game), stats: bridge.client?.stats }
+              : { ok: false, error: bridge.error, detail: bridge.detail || null },
+            backend: backendInfo,
+            dsh,
+            plugin: pluginVersions(),
+            save: app.paths.saveDir,
+          }),
+        )
+        return 0
       }
       case 'selftest': {
         const checks = []
         const add = (name, ok, detail = '') => checks.push({ name, ok: Boolean(ok), detail })
         add('node >= 22', Number(process.versions.node.split('.')[0]) >= 22, process.versions.node)
         add('config file', true, configFile())
-        add('api key', Boolean(config.deepseek?.apiKey), config.deepseek?.apiKey ? '已配置' : '未配置（ask/chat/serve 需要）')
-        add('user dir', Boolean(engine.dir), engine.dir || '未找到')
-        add('install dir', Boolean(engine.status().installDir), engine.status().installDir || '未找到（事件工具不可用）')
-        add('mods', engine.status().mods.reader && engine.status().mods.console, JSON.stringify(engine.status().mods))
-        add('snapshot', Boolean(engine.state.current.id), engine.state.current.id || '还没有（进游戏过一个月）')
-        const designs = engine.designs()
-        checks.push({ name: 'designs', ok: designs.ok, detail: designs.ok ? `${designs.count} 份` : (designs.error || '无'), optional: true })
-        if (flags.online && client) {
-          try {
-            const reply = await client.chat([{ role: 'user', content: '回复 ok 两个字母' }], { maxTokens: 16 })
-            add('deepseek api', Boolean(reply.message?.content), reply.model)
-          } catch (error) {
-            add('deepseek api', false, String(error?.message || error).slice(0, 200))
-          }
+        add('user dir', Boolean(app.paths.userDir), app.paths.userDir || '未找到')
+        add('install dir', Boolean(app.paths.installDir), app.paths.installDir || '未找到')
+        add('save dir', Boolean(app.paths.saveDir), app.paths.saveDir || '未找到')
+        add('backend configured', app.backendKind() === 'dsh' ? Boolean(app.config.ai.dsh.url) : Boolean(app.config.ai.deepseek.apiKey), app.backendKind())
+        const plugin = pluginVersions()
+        add('plugin source', Boolean(plugin.version), `${plugin.dir} v${plugin.version}`)
+        if (flags.online) {
+          const backend = createBackend({ config: app.config, log: app.log })
+          const info = await checkBackend(backend)
+          add('backend reachable', info.ok, info.error || info.backend)
         }
         for (const check of checks) out(`${check.ok ? '✔' : '✖'} ${check.name}${check.detail ? ' — ' + check.detail : ''}`)
-        return checks.every((check) => check.ok || check.optional) ? 0 : 1
+        return checks.every((check) => check.ok) ? 0 : 1
       }
       default:
         out(`未知命令：${command}\n`)
         out(HELP)
         return 2
     }
-  } finally {
-    engine.close()
+  } catch (error) {
+    out(`错误：${error?.message || error}`)
+    if (error?.detail) out(pretty(error.detail))
+    return error?.code === 'GAME_NOT_RUNNING' ? 1 : 1
   }
 }
+
+export const _internals = { readOnce, parse, execFileAsync, join }

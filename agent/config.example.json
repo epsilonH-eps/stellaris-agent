@@ -1,71 +1,106 @@
 {
-  "stellarisUserDir": "",
-  "stellarisInstallDir": "",
-  "gameTitleMatch": "Stellaris",
-  "consoleKey": "`",
-  "injection": "auto",
-  "ackTimeoutMs": 6000,
-  "injectGapMs": 1200,
-  "uiMode": "hotkey",
-  "uiHotkeys": {
-    "ascension": "F5",
-    "traditions": "F4",
-    "technology": "F2",
-    "government": "F1",
-    "leaders": "F6",
-    "fleets": "F7",
-    "diplomacy": "F8",
-    "relics": "F9",
-    "policies": "F3",
-    "planets": "F10"
+  "version": 2,
+  "paths": {
+    "stellarisInstallDir": "",
+    "stellarisUserDir": "",
+    "saveDir": ""
   },
-  "safety": {
-    "allowExperimental": false,
-    "allowRawEffect": false,
-    "maxResourcePerAction": 50000,
-    "requireConfirmOver": 3,
-    "maxActionsPerTurn": 8
+  "bridge": {
+    "pipeName": "stellaris_mcp_bridge",
+    "dllPath": "",
+    "injectTimeoutMs": 30000,
+    "requestTimeoutMs": 15000,
+    "reconnectDelayMs": 500,
+    "autoInject": true,
+    "autoStartOrchestrator": true,
+    "watchSeconds": 15
   },
-  "deepseek": {
-    "apiKey": "",
-    "baseUrl": "https://api.deepseek.com",
-    "model": "deepseek-chat",
-    "reasonerModel": "deepseek-reasoner",
-    "temperature": 0.4,
-    "maxTokens": 4096,
-    "maxSteps": 8,
-    "timeoutMs": 120000,
-    "useTools": true
+  "read": {
+    "onStart": "full",
+    "deep": true,
+    "includeCivilianFleets": true,
+    "includeDiplomacyOptions": true,
+    "maxDiplomacyCountries": 24,
+    "includeGalaxyMap": true,
+    "galaxyMapJumps": 60,
+    "eventChainDepth": 6,
+    "maxEventChains": 300,
+    "refreshSeconds": 20,
+    "watchSeconds": 15,
+    "megastructureScanSeconds": 300
   },
-  "operator": {
+  "executor": {
+    "pauseWhenQueuedActions": 8,
+    "resumeWhenQueuedActionsBelow": 3,
+    "autoPause": true,
+    "autoResume": true,
+    "maxAttempts": 3,
+    "retryDelayMs": 450,
+    "verify": true,
+    "keepJobHistory": 60
+  },
+  "ai": {
+    "backend": "deepseek",
+    "deepseek": {
+      "apiKey": "",
+      "baseUrl": "https://api.deepseek.com",
+      "model": "deepseek-chat",
+      "temperature": 0.3,
+      "maxTokens": 4096,
+      "timeoutMs": 120000,
+      "retries": 2
+    },
+    "dsh": {
+      "url": "http://127.0.0.1:49939",
+      "autoDiscover": true,
+      "timeoutMs": 600000
+    },
+    "main": {
+      "intervalSeconds": 120,
+      "maxActionsPerTurn": 8,
+      "historyMessages": 24,
+      "activateOnStart": true
+    },
+    "unit": {
+      "intervalSeconds": 45,
+      "maxActionsPerTurn": 4,
+      "attempts": 3,
+      "historyMessages": 18
+    },
+    "event": {
+      "maxActionsPerTurn": 3,
+      "attempts": 2,
+      "historyMessages": 12
+    }
+  },
+  "units": {
+    "research": true,
+    "council": true,
+    "laws": true,
+    "economy": true,
+    "diplomacy": true,
+    "fleets": true,
+    "planets": true,
+    "events": true
+  },
+  "objective": "",
+  "chat": {
     "enabled": true,
-    "model": "",
-    "maxSteps": 4
+    "port": 8787,
+    "token": "",
+    "maxHistory": 500
+  },
+  "dshPlugin": {
+    "autoInstall": true,
+    "autoReload": false,
+    "profileDir": "",
+    "restartCommand": ""
   },
   "journal": {
     "enabled": true
   },
-  "liveChat": {
-    "enabled": true,
-    "port": 8787,
-    "token": "",
-    "allowSay": true,
-    "maxQueue": 200
-  },
   "log": {
-    "maxBackfillBytes": 524288,
-    "pollMs": 1500
-  },
-  "swarm": {
-    "tickSeconds": 60,
-    "mainTickSeconds": 180,
-    "queuePauseThreshold": 10,
-    "attempts": 5,
-    "autoUnpause": false,
-    "components": [],
-    "watchSeconds": 15,
-    "megastructureScanSeconds": 300,
-    "backend": "local",
-    "dshUrl": "http://127.0.0.1:49939"
+    "level": "info",
+    "file": true
   }
 }

@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
   把 stellaris_bridge.dll 注入正在运行的群星进程（LoadLibraryW 远程线程）。

@@ -1,23 +1,28 @@
 /**
- * 本地面板 + 直播接口。
+ * 本地 HTTP 服务：GUI / 外部脚本 / 直播接入都用它。
  *
- * 只绑 127.0.0.1；配了 token 就要求 Bearer。页面是一个内联单页，
- * 不做构建、不引前端框架——独立软件不该为了一个面板背 npm 依赖。
+ * 约定：
+ *  - 只绑 127.0.0.1；`chat.token` 非空时要求 `Authorization: Bearer`（或 `?token=`）；
+ *  - 成功 `{ok:true,...}`，失败 `{ok:false,error:<短码>,detail?}`；
+ *  - 读接口不触发写操作；写动作一律进执行器（串行 + 读回 + 阈值暂停）。
+ *
+ * 路由分组：
+ *   状态      /api/health /api/status /api/brief /api/diagnostics
+ *   读取      /api/world /api/world/events /api/mods /api/actions /api/units /api/events/*
+ *   执行      /api/execute /api/executor /api/pause /api/resume
+ *   编排      /api/orchestrator/{start,stop,restart,objective}
+ *   聊天      /api/chat/{in,out,poll,history,stream}
+ *   设置      /api/settings /api/plugin/{install,update,reload} /api/dsh/discover
  *
  * @module stellaris-agent/server
  */
 import { createServer } from 'node:http'
-
-import { ensureNativeBridge, findGameProcess, NativePipe } from './native-bridge.mjs'
-import { readAll, summarize } from './native-reader.mjs'
-import { runSteps } from './native-operator.mjs'
-import { Swarm } from './swarm.mjs'
-import { discoverDshUrl } from './dsh-discovery.mjs'
-import { logFile } from './logger.mjs'
 import { readFileSync } from 'node:fs'
-import { agentHome } from './config.mjs'
-import { loadChains, chainOf } from './event-chains.mjs'
-import { join } from 'node:path'
+import { describeActions } from './actions.mjs'
+import { logFile } from './logger.mjs'
+import { redactConfig } from './app.mjs'
+
+const VERSION = '2.0.0'
 
 function json(res, status, body) {
   res.writeHead(status, {
@@ -27,7 +32,11 @@ function json(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-async function readBody(req, limit = 256 * 1024) {
+function fail(res, status, error, detail = null) {
+  return json(res, status, detail === null ? { ok: false, error } : { ok: false, error, detail })
+}
+
+async function readBody(req, limit = 1024 * 1024) {
   const chunks = []
   let size = 0
   for await (const chunk of req) {
@@ -35,6 +44,7 @@ async function readBody(req, limit = 256 * 1024) {
     if (size > limit) return null
     chunks.push(chunk)
   }
+  if (!chunks.length) return {}
   try {
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
   } catch {
@@ -42,371 +52,381 @@ async function readBody(req, limit = 256 * 1024) {
   }
 }
 
+function compactWorld(world) {
+  if (!world) return null
+  const copy = { ...world }
+  delete copy.systems
+  delete copy.designCatalog
+  delete copy.discoveries
+  copy.colonies = (world.colonies || []).map((colony) => ({
+    planet_id: colony.planet_id,
+    name: colony.name ?? colony.details?.planet_name ?? null,
+    pops: colony.details?.population ?? colony.pops ?? null,
+    stability: colony.details?.stability ?? colony.stability ?? null,
+    jobs: colony.jobs,
+    buildable: {
+      buildings: colony.buildableBuildings,
+      districts: colony.buildableDistricts,
+      zones: colony.districtZones,
+      blockers: colony.clearableBlockers,
+      decisions: colony.decisions,
+      terraforming: colony.terraforming,
+    },
+    queue: colony.details?.construction_queue ?? null,
+  }))
+  copy.fleetsDetail = (world.fleetsDetail || []).map((row) => ({ fleet_id: row.fleet_id, kind: row.kind, summary: row.summary, detail: row.detail }))
+  return copy
+}
+
 const PAGE = `<!doctype html>
-<html lang="zh">
-<meta charset="utf-8">
-<title>群星参谋</title>
+<html lang="zh"><meta charset="utf-8"><title>群星参谋</title>
 <style>
-  :root { color-scheme: dark }
-  body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui; background:#0d1117; color:#c9d1d9 }
-  header { padding: 10px 16px; border-bottom: 1px solid #21262d; display:flex; gap:12px; align-items:center }
-  main { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px }
-  section { background:#11161d; border:1px solid #21262d; border-radius:8px; padding:12px; min-height: 60vh }
-  pre { white-space: pre-wrap; word-break: break-word; margin:0; font: 12px/1.55 ui-monospace, Consolas }
-  textarea { width:100%; height:70px; background:#0d1117; color:#c9d1d9; border:1px solid #30363d; border-radius:6px; padding:8px }
-  button { background:#238636; color:#fff; border:0; border-radius:6px; padding:8px 14px; cursor:pointer }
-  button.ghost { background:#21262d }
-  .row { display:flex; gap:8px; margin-top:8px }
-  .tag { color:#8b949e; font-size:12px }
+ :root{color-scheme:dark}body{margin:0;font:14px/1.6 ui-sans-serif,system-ui;background:#0d1117;color:#c9d1d9}
+ header{padding:10px 16px;border-bottom:1px solid #21262d;display:flex;gap:12px;align-items:center}
+ main{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;padding:12px}
+ section{background:#11161d;border:1px solid #21262d;border-radius:8px;padding:12px;min-height:70vh;display:flex;flex-direction:column}
+ pre{white-space:pre-wrap;word-break:break-word;margin:0;font:12px/1.55 ui-monospace,Consolas;overflow:auto;flex:1}
+ input,button,select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:8px}
+ button{background:#238636;color:#fff;border:0;cursor:pointer}
+ .row{display:flex;gap:8px;margin-top:8px}.tag{color:#8b949e;font-size:12px}
 </style>
-<header>
-  <strong>群星参谋</strong>
-  <span class="tag" id="conn">连接中…</span>
-  <button class="ghost" onclick="load()">刷新</button>
-</header>
+<header><strong>群星参谋</strong><span class="tag" id="conn">连接中…</span>
+ <button onclick="load()">刷新</button></header>
 <main>
-  <section>
-    <h3>战局</h3>
-    <pre id="brief">…</pre>
-  </section>
-  <section>
-    <h3>参谋</h3>
-    <pre id="log" style="height:40vh;overflow:auto"></pre>
-    <textarea id="ask" placeholder="问点什么，或让它做点什么（例如：合金太低了，想办法提上去）"></textarea>
-    <div class="row">
-      <button onclick="send()">发送</button>
-      <button class="ghost" onclick="stream()">接事件流</button>
-      <span class="tag" id="usage"></span>
-    </div>
-  </section>
+ <section><h3>战局</h3><pre id="brief">…</pre></section>
+ <section><h3>聊天</h3><pre id="chat" style="max-height:55vh"></pre>
+  <div class="row"><input id="who" value="player" style="width:110px" placeholder="id">
+   <input id="msg" style="flex:1" placeholder="对参谋说点什么"><button onclick="send()">发送</button></div>
+  <div class="row"><span class="tag" id="hint"></span></div>
+ </section>
 </main>
 <script>
-const token = new URLSearchParams(location.search).get('token') || '';
-const headers = { 'content-type': 'application/json' };
-if (token) headers.authorization = 'Bearer ' + token;
-const log = document.getElementById('log');
-function add(t) { log.textContent += t + '\\n'; log.scrollTop = log.scrollHeight }
-async function load() {
-  const r = await fetch('/api/brief', { headers });
-  const d = await r.json();
-  document.getElementById('brief').textContent = d.brief || d.error || '';
-  const s = await (await fetch('/api/status', { headers })).json();
-  document.getElementById('conn').textContent = s.userDir ? ('已连接：' + (s.snapshot?.date || '无快照')) : '未连接';
+const token=new URLSearchParams(location.search).get('token')||'';
+const headers={'content-type':'application/json'};if(token)headers.authorization='Bearer '+token;
+const chat=document.getElementById('chat');
+function add(t){chat.textContent+=t+'\\n';chat.scrollTop=chat.scrollHeight}
+async function load(){
+ const s=await (await fetch('/api/status',{headers})).json();
+ document.getElementById('conn').textContent=(s.running?'运行中':'未启动')+' · '+(s.backend||'')+' · '+(s.paths?.userDir||'无用户目录');
+ const b=await (await fetch('/api/brief',{headers})).json();
+ document.getElementById('brief').textContent=b.brief||b.error||'';
 }
-async function send() {
-  const text = document.getElementById('ask').value.trim();
-  if (!text) return;
-  document.getElementById('ask').value = '';
-  add('你：' + text);
-  const r = await fetch('/api/ask', { method:'POST', headers, body: JSON.stringify({ text }) });
-  const d = await r.json();
-  if (d.text) add('参谋：' + d.text);
-  if (d.summary) add('摘要：' + d.summary);
-  if (d.usage) document.getElementById('usage').textContent = 'tokens ' + d.usage.totalTokens;
+async function send(){
+ const text=document.getElementById('msg').value.trim();if(!text)return;
+ const id=document.getElementById('who').value.trim()||'player';
+ document.getElementById('msg').value='';
+ const r=await fetch('/api/chat/in',{method:'POST',headers,body:JSON.stringify({id,text})});
+ const d=await r.json();document.getElementById('hint').textContent=d.ok?'已送达，等待主会话':'失败：'+(d.error||'');
 }
-function stream() {
-  const es = new EventSource('/api/events' + (token ? ('?token=' + encodeURIComponent(token)) : ''));
-  es.onmessage = (e) => add('· ' + e.data);
-  es.onerror = () => add('（事件流断开）');
+let since=0;
+async function poll(){
+ try{
+  const d=await (await fetch('/api/chat/poll?since='+since,{headers})).json();
+  for(const m of d.messages||[]){add((m.direction==='in'?'你':'参谋')+'：'+m.text);since=Math.max(since,m.seq)}
+ }catch{}
+ setTimeout(poll,2000);
 }
-load(); stream();
+load();poll();setInterval(load,10000);
 </script>`
 
 /**
- * @param {object} deps {config, orchestrator, engine, bus, log}
+ * @param {object} options
+ * @param {import('./app.mjs').App} options.app
+ * @param {Function} [options.log]
  */
-export function startServer({ config, orchestrator, engine, bus, scheduler = null, log = () => {} }) {
-  const port = Number(config.liveChat?.port ?? 8787)
-  const token = String(config.liveChat?.token || '')
-  const clients = new Set()
-  const broadcast = (text) => {
-    for (const res of clients) {
-      try {
-        res.write(`data: ${text}\n\n`)
-      } catch {
-        clients.delete(res)
-      }
-    }
-  }
+export function startServer({ app, log = () => {} }) {
+  const port = Number(app.config?.chat?.port ?? 8787)
+  const token = String(app.config?.chat?.token || '')
   const authorized = (req, url) => {
     if (!token) return true
     const header = String(req.headers.authorization || '')
     return header === `Bearer ${token}` || url.searchParams.get('token') === token
   }
 
-  let busy = false
+  const sseClients = new Set()
+  const broadcast = (event, payload) => {
+    const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`
+    for (const res of sseClients) {
+      try {
+        res.write(frame)
+      } catch {
+        sseClients.delete(res)
+      }
+    }
+  }
 
-  let swarm = null
+  const requireOrchestrator = () => {
+    if (!app.orchestrator?.running) {
+      const error = new Error('调度器未启动')
+      error.code = 'ORCHESTRATOR_NOT_RUNNING'
+      throw error
+    }
+    return app.orchestrator
+  }
+
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1')
-    if (!authorized(req, url)) return json(res, 401, { error: 'unauthorized' })
+    if (!authorized(req, url)) return fail(res, 401, 'UNAUTHORIZED')
+    const path = url.pathname
+    const method = req.method || 'GET'
+    try {
+      // ---------------------------------------------------------------- 页面
+      if (method === 'GET' && path === '/') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        return res.end(PAGE)
+      }
+      if (method === 'GET' && path === '/api/health') {
+        return json(res, 200, { ok: true, name: 'stellaris-agent', version: VERSION, running: app.running })
+      }
+      if (method === 'GET' && path === '/api/status') return json(res, 200, { ok: true, ...app.status() })
+      if (method === 'GET' && path === '/api/brief') return json(res, 200, { ok: true, brief: app.brief() })
+      if (method === 'GET' && path === '/api/readiness') {
+        return json(res, 200, { ok: true, ...(await app.readiness({ verifyLlm: url.searchParams.get('verify') === '1' })) })
+      }
+      if (method === 'POST' && path === '/api/connect') {
+        const body = await readBody(req)
+        return json(res, 200, { ok: true, ...(await app.connect({ start: body?.start })) })
+      }
 
-    if (req.method === 'GET' && url.pathname === '/') {
-      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      return res.end(PAGE)
-    }
-    if (req.method === 'GET' && url.pathname === '/api/health') return json(res, 200, { ok: true, name: 'stellaris-agent' })
-    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, 200, engine.status())
-    if (req.method === 'GET' && url.pathname === '/api/brief') {
-      return json(res, 200, { brief: engine.brief(6000) })
-    }
-    if (req.method === 'GET' && url.pathname === '/api/timeline') {
-      return json(res, 200, { entries: engine.timeline.list({ limit: 30 }), status: engine.timeline.status() })
-    }
-    if (req.method === 'GET' && url.pathname === '/api/events') {
-      res.writeHead(200, {
-        'content-type': 'text/event-stream; charset=utf-8',
-        'cache-control': 'no-store',
-        connection: 'keep-alive',
-      })
-      res.write('data: 事件流已连接\n\n')
-      clients.add(res)
-      const ping = setInterval(() => res.write(': ping\n\n'), 15000)
-      ping.unref?.()
-      req.on('close', () => {
-        clearInterval(ping)
-        clients.delete(res)
-      })
-      return undefined
-    }
-    if (req.method === 'GET' && url.pathname === '/api/diagnostics') {
-      const status = engine.status()
-      let tail = ''
-      try { tail = readFileSync(logFile(), 'utf8').split(/\r?\n/).slice(-200).join('\n') } catch {}
-      const dshUrl = String(config.swarm?.dshUrl || '').replace(/\/+$/, '')
-      let dsh = { url: dshUrl, reachable: false, service: null, error: null }
-      if (dshUrl) {
+      // ---------------------------------------------------------------- 会话
+      if (method === 'GET' && path === '/api/sessions') {
+        const orchestrator = app.orchestrator
+        return json(res, 200, { ok: true, sessions: orchestrator?.sessions() || [] })
+      }
+      if (method === 'GET' && path.startsWith('/api/sessions/')) {
+        const orchestrator = app.orchestrator
+        const id = decodeURIComponent(path.slice('/api/sessions/'.length))
+        const session = orchestrator?.sessionDetail(id) || null
+        if (!session) return fail(res, 404, 'SESSION_NOT_FOUND', id)
+        return json(res, 200, { ok: true, session })
+      }
+
+      if (method === 'GET' && path === '/api/diagnostics') {
+        let tail = ''
         try {
-          const response = await fetch(dshUrl + '/api/stellaris-orchestrator/health', { signal: AbortSignal.timeout(2500) })
-          const body = await response.json().catch(() => ({}))
-          dsh.reachable = Boolean(response.ok && body.ok !== false)
-          dsh.service = body.service || null
-          if (!dsh.reachable) dsh.error = body.error || ('HTTP ' + response.status)
-        } catch (error) {
-          dsh.error = String(error?.message || error)
+          tail = readFileSync(logFile(), 'utf8').split(/\r?\n/).slice(-200).join('\n')
+        } catch {
+          /* 没有日志 */
         }
-      }
-      const game = await findGameProcess().catch(() => null)
-      if (game) {
-        const pipe = new NativePipe({ timeoutMs: 1500 })
-        try {
-          const status = await pipe.request('get_status')
-          game.bridge = true
-          game.inGame = Boolean(status.in_game)
-          game.date = status.date?.formatted || null
-        } catch (error) {
-          game.bridge = false
-          game.inGame = false
-          game.error = String(error?.message || error)
-        } finally { pipe.close() }
-      }
-      return json(res, 200, {
-        time: new Date().toISOString(),
-        game,
-        dsh,
-        node: process.version,
-        platform: process.platform,
-        config: {
-          backend: config.swarm?.backend || 'local',
-          dshUrl: config.swarm?.dshUrl || null,
-          apiKeyConfigured: Boolean(String(config.deepseek?.apiKey || '').trim()),
-          installDir: status.installDir,
-          userDir: status.userDir,
-        },
-        status,
-        readiness: null,
-        logTail: tail,
-        logFile: logFile(),
-      })
-    }
-    if (req.method === 'POST' && url.pathname === '/api/swarm/start') {
-      log('swarm.start.request', { backend: config.swarm?.backend || 'local', dshUrl: config.swarm?.dshUrl || null })
-      const body = await readBody(req)
-      if (!orchestrator && (config.swarm?.backend || 'local') !== 'dsh') { log('swarm.start.no-key'); return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' }) }
-      if (swarm) return json(res, 200, { ok: true, already: true, status: swarm.status() })
-      try {
-        const config = { ...config, swarm: { ...(config.swarm || {}), ...(body?.objective ? { objective: String(body.objective) } : {}) } }
-        swarm = new Swarm({ engine, orchestrator, config, log })
-        const started = await swarm.start({ once: Boolean(body?.once) })
-        if (!started.ok) { log('swarm.start.failed', started); swarm = null; return json(res, 500, started) }
-        return json(res, 200, { ok: true, started, status: swarm.status() })
-      } catch (error) {
-        log('swarm.start.error', { error: String(error?.message || error) })
-        swarm = null
-        return json(res, 500, { ok: false, error: String(error?.message || error) })
-      }
-    }
-    if (req.method === 'POST' && url.pathname === '/api/swarm/stop') {
-      try { swarm?.stop() } catch {}
-      swarm = null
-      return json(res, 200, { ok: true })
-    }
-    if (req.method === 'GET' && url.pathname === '/api/swarm/status') {
-      return json(res, 200, swarm ? swarm.status() : { running: false })
-    }
-    if (req.method === 'GET' && url.pathname === '/api/dsh/discover') {
-      return json(res, 200, await discoverDshUrl())
-    }
-    if (req.method === 'POST' && url.pathname === '/api/native/connect') {
-      const bridge = await ensureNativeBridge({ log })
-      if (!bridge.ok) return json(res, 503, bridge)
-      try {
+        const orchestrator = app.orchestrator
         return json(res, 200, {
           ok: true,
-          inGame: Boolean(bridge.status?.in_game),
-          date: bridge.status?.date?.formatted || null,
-          injected: Boolean(bridge.injected),
+          time: new Date().toISOString(),
+          version: VERSION,
+          node: process.version,
+          platform: process.platform,
+          home: app.home,
+          configFile: app.configFile,
+          config: redactConfig(app.config),
+          paths: app.paths,
+          plugin: app.status().plugin,
+          dsh: app.orchestrator?.backend?.describe?.() || { backend: app.backendKind() },
+          probe: app._probeBackend
+            ? {
+                class: app._probeBackend.constructor?.name || null,
+                url: app._probeBackend.baseUrl || null,
+                autoDiscover: app._probeBackend.autoDiscover ?? null,
+                lastHealth: app._probeBackend.lastHealth || null,
+              }
+            : null,
+          readinessCache: app._readiness || null,
+          bridge: orchestrator?.status().bridge || null,
+          world: orchestrator?.world?.status() || null,
+          executor: orchestrator?.executor?.status() || null,
+          unsupportedMethods: orchestrator?.reader?.unsupported ? [...orchestrator.reader.unsupported] : [],
+          lastError: app.lastError,
+          logTail: tail,
+          logFile: logFile(),
         })
-      } finally {
-        bridge.pipe.close()
       }
-    }
-    if (req.method === 'GET' && url.pathname === '/api/readiness') {
-      const dshUrl = String(config.swarm?.dshUrl || 'http://127.0.0.1:49939').replace(/\/+$/, '')
-      const result = {
-        backend: config.swarm?.backend || 'local',
-        ai: { configured: Boolean(String(config.deepseek?.apiKey || '').trim()) },
-        dsh: { url: dshUrl, reachable: false, error: null },
-        game: { running: false, bridge: false, inGame: false, date: null, error: null },
+
+      // ---------------------------------------------------------------- 读取
+      if (method === 'GET' && path === '/api/world') {
+        const orchestrator = requireOrchestrator()
+        const world = orchestrator.world?.current
+        if (!world) return fail(res, 503, 'NO_WORLD')
+        return json(res, 200, { ok: true, world: url.searchParams.get('full') === '1' ? world : compactWorld(world) })
       }
-      try {
-        const response = await fetch(dshUrl + '/api/stellaris-orchestrator/health', { signal: AbortSignal.timeout(2500) })
-        const body = await response.json().catch(() => ({}))
-        result.dsh.reachable = Boolean(response.ok && body.ok !== false)
-        if (!result.dsh.reachable) result.dsh.error = body.error || ('HTTP ' + response.status)
-      } catch (error) {
-        result.dsh.error = String(error?.message || error)
+      if (method === 'GET' && path === '/api/world/events') {
+        const orchestrator = requireOrchestrator()
+        const world = orchestrator.world?.current
+        return json(res, 200, {
+          ok: true,
+          active: world?.eventChains?.active || [],
+          unresolved: world?.eventChains?.unresolved || [],
+          index: orchestrator.eventGraph?.status() || null,
+          alerts: world?.alerts || [],
+        })
       }
-      if (!result.dsh.reachable) {
-        try {
-          const detected = await discoverDshUrl({ timeoutMs: 800 })
-          if (detected.ok) {
-            result.dsh.detectedUrl = detected.url
-            result.dsh.reachable = true
-            result.dsh.error = null
-          }
-        } catch {}
+      if (method === 'GET' && path === '/api/mods') {
+        const orchestrator = app.orchestrator
+        return json(res, 200, { ok: true, mods: orchestrator?.mods || null })
       }
-      try {
-        const game = await findGameProcess()
-        result.game.running = Boolean(game)
-        if (game) {
-          const pipe = new NativePipe({ timeoutMs: 2500 })
-          try {
-            const status = await pipe.request('get_status')
-            result.game.bridge = true
-            result.game.inGame = Boolean(status.in_game)
-            result.game.date = status.date?.formatted || null
-          } catch (error) {
-            result.game.error = String(error?.message || error)
-          } finally {
-            pipe.close()
-          }
+      if (method === 'GET' && path === '/api/actions') {
+        return json(res, 200, { ok: true, actions: describeActions({ unit: url.searchParams.get('unit') || null }) })
+      }
+      if (method === 'GET' && path === '/api/units') {
+        const orchestrator = app.orchestrator
+        if (!orchestrator) return json(res, 200, { ok: true, units: [] })
+        return json(res, 200, { ok: true, units: orchestrator.status().units })
+      }
+      if (method === 'GET' && path === '/api/events/search') {
+        const orchestrator = requireOrchestrator()
+        const query = String(url.searchParams.get('q') || '')
+        if (!query) return fail(res, 400, 'MISSING_QUERY')
+        return json(res, 200, { ok: true, hits: orchestrator.eventGraph?.search(query, 30) || [] })
+      }
+      if (method === 'GET' && path === '/api/events/chain') {
+        const orchestrator = requireOrchestrator()
+        const id = String(url.searchParams.get('id') || '')
+        if (!id) return fail(res, 400, 'MISSING_ID')
+        const depth = Number(url.searchParams.get('depth') || 6)
+        const chain = orchestrator.eventGraph?.successors(id, Math.min(12, Math.max(1, depth))) || null
+        if (!chain) return fail(res, 404, 'EVENT_NOT_FOUND', id)
+        return json(res, 200, { ok: true, chain })
+      }
+
+      // ---------------------------------------------------------------- 执行
+      if (method === 'POST' && path === '/api/execute') {
+        const body = await readBody(req)
+        if (!body || !Array.isArray(body.actions)) return fail(res, 400, 'EXPECTED_ACTIONS')
+        const orchestrator = requireOrchestrator()
+        const result = await orchestrator.execute(body.actions, { unit: body.unit || 'api', source: 'api' })
+        return json(res, result.ok ? 200 : 422, result)
+      }
+      if (method === 'GET' && path === '/api/executor') {
+        const orchestrator = app.orchestrator
+        return json(res, 200, { ok: true, executor: orchestrator?.executor?.status() || null })
+      }
+      if (method === 'POST' && path === '/api/pause') return json(res, 200, await requireOrchestrator().pause())
+      if (method === 'POST' && path === '/api/resume') return json(res, 200, await requireOrchestrator().resume())
+      if (method === 'POST' && path === '/api/refresh') {
+        const body = await readBody(req)
+        const orchestrator = requireOrchestrator()
+        const world = await orchestrator.refreshWorld({ deep: body?.deep !== false })
+        return json(res, 200, { ok: true, world: world ? compactWorld(world) : null })
+      }
+
+      // ---------------------------------------------------------------- 编排
+      if (method === 'POST' && path === '/api/orchestrator/start') {
+        const body = await readBody(req)
+        const status = await app.start({ objective: body?.objective ?? app.config.objective ?? '' })
+        return json(res, 200, { ok: true, status })
+      }
+      if (method === 'POST' && path === '/api/orchestrator/stop') {
+        const body = await readBody(req)
+        return json(res, 200, await app.stop({ resume: body?.resume !== false, suppressAuto: body?.suppressAuto !== false }))
+      }
+      if (method === 'POST' && path === '/api/orchestrator/restart') {
+        const body = await readBody(req)
+        return json(res, 200, await app.restart({ objective: body?.objective ?? app.config.objective ?? '' }))
+      }
+      if (method === 'POST' && path === '/api/orchestrator/objective') {
+        const body = await readBody(req)
+        if (typeof body?.objective !== 'string') return fail(res, 400, 'EXPECTED_OBJECTIVE')
+        return json(res, 200, requireOrchestrator().setObjective(body.objective))
+      }
+
+      // ---------------------------------------------------------------- 聊天
+      if (method === 'POST' && path === '/api/chat/in') {
+        const body = await readBody(req)
+        const orchestrator = requireOrchestrator()
+        const result = orchestrator.chat.inbound({ id: body?.id ?? 'player', text: body?.text, name: body?.name ?? null, meta: body?.meta ?? null })
+        if (!result.ok) return fail(res, 400, result.error)
+        orchestrator.scheduleMain('chat', 500)
+        return json(res, 200, { ok: true, message: result.message })
+      }
+      if (method === 'POST' && path === '/api/chat/out') {
+        const body = await readBody(req)
+        const orchestrator = requireOrchestrator()
+        const result = orchestrator.chat.outbound({ text: body?.text, id: body?.id ?? 'external', kind: body?.kind || 'say' })
+        if (!result.ok) return fail(res, 400, result.error)
+        return json(res, 200, { ok: true, message: result.message })
+      }
+      if (method === 'GET' && (path === '/api/chat/poll' || path === '/api/chat/out')) {
+        const orchestrator = app.orchestrator
+        if (!orchestrator?.chat) {
+          // 编排器没启动时轮询返回空，避免 GUI 每 2 秒撞一次 409
+          return json(res, 200, { ok: true, messages: [], next: Number(url.searchParams.get('since') || 0), last: 0 })
         }
-      } catch (error) {
-        result.game.error = String(error?.message || error)
+        return json(res, 200, { ok: true, ...orchestrator.chat.poll({ since: Number(url.searchParams.get('since') || 0), limit: Number(url.searchParams.get('limit') || 200) }) })
       }
-      return json(res, 200, result)
-    }
-    if (req.method === 'GET' && url.pathname === '/api/native/status') {
-      const bridge = await ensureNativeBridge({ log })
-      if (!bridge.ok) return json(res, 503, bridge)
-      try { return json(res, 200, bridge.status) } finally { bridge.pipe.close() }
-    }
-    if (req.method === 'GET' && url.pathname === '/api/native/read') {
-      const bridge = await ensureNativeBridge({ log })
-      if (!bridge.ok) return json(res, 503, bridge)
-      try {
-        const data = await readAll(bridge.pipe, { log })
-        return json(res, 200, { summary: summarize(data), data })
-      } finally { bridge.pipe.close() }
-    }
-    if (req.method === 'POST' && url.pathname === '/api/native/run') {
-      const body = await readBody(req)
-      if (!body || !Array.isArray(body.steps)) return json(res, 400, { error: 'expected { steps }' })
-      const bridge = await ensureNativeBridge({ log })
-      if (!bridge.ok) return json(res, 503, bridge)
-      try {
-        return json(res, 200, await runSteps(bridge.pipe, body.steps, { attempts: body.attempts ?? 5, log }))
-      } finally { bridge.pipe.close() }
-    }
-    if (req.method === 'GET' && url.pathname === '/api/events/search') {
-      const data = loadChains(join(agentHome(), 'event-chains.json'))
-      if (!data) return json(res, 404, { error: '先跑 events-index' })
-      const q = String(url.searchParams.get('q') || '').toLowerCase()
-      const hits = data.events.filter((e) => String(e.id).toLowerCase().includes(q) || String(e.titleKey || '').toLowerCase().includes(q)).slice(0, 30)
-      return json(res, 200, { hits })
-    }
-    if (req.method === 'GET' && url.pathname === '/api/events/chain') {
-      const data = loadChains(join(agentHome(), 'event-chains.json'))
-      if (!data) return json(res, 404, { error: '先跑 events-index' })
-      return json(res, 200, chainOf(data, String(url.searchParams.get('id') || ''), Number(url.searchParams.get('depth') || 4)))
-    }
-    if (req.method === 'GET' && url.pathname === '/api/queue') {
-      return json(res, 200, scheduler ? scheduler.status() : { running: false, current: null, queued: [], history: [] })
-    }
-    if (req.method === 'POST' && url.pathname === '/api/dispatch') {
-      const body = await readBody(req)
-      if (!body || typeof body.goal !== 'string') return json(res, 400, { error: 'expected { goal }' })
-      if (!scheduler) return json(res, 503, { error: 'scheduler 未启动（需要 API key）' })
-      return json(res, 200, scheduler.dispatch(body.goal, { priority: body.priority }))
-    }
-    if (req.method === 'POST' && url.pathname === '/api/apply-auto') {
-      const body = await readBody(req)
-      if (!body || !Array.isArray(body.actions)) return json(res, 400, { error: 'expected { actions: [...] }' })
-      try {
-        return json(res, 200, engine.applyAuto(body.actions))
-      } catch (error) {
-        return json(res, 500, { error: String(error?.message || error) })
+      if (method === 'GET' && path === '/api/chat/history') {
+        const orchestrator = app.orchestrator
+        if (!orchestrator?.chat) return json(res, 200, { ok: true, messages: [] })
+        return json(res, 200, { ok: true, messages: orchestrator.chat.history({ limit: Number(url.searchParams.get('limit') || 100) }) })
       }
-    }
-    if (req.method === 'POST' && url.pathname === '/api/ask') {
-      if (!orchestrator) return json(res, 503, { error: '未配置 DeepSeek API Key；请先在「设置」页保存 Key' })
-      const body = await readBody(req)
-      if (!body || typeof body.text !== 'string') return json(res, 400, { error: 'expected { text }' })
-      if (busy) return json(res, 409, { error: '上一轮还没跑完' })
-      busy = true
-      try {
-        const result = await orchestrator.run({
-          goal: body.text,
-          allowWrite: body.readOnly !== true,
-          onEvent: (event) => {
-            if (event.type === 'text') broadcast(String(event.text).slice(0, 400))
-            else if (event.type === 'tool') broadcast(`调用工具 ${event.name}`)
-          },
+      if (method === 'GET' && (path === '/api/chat/stream' || path === '/api/stream')) {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream; charset=utf-8',
+          'cache-control': 'no-store',
+          connection: 'keep-alive',
         })
-        return json(res, 200, result)
-      } catch (error) {
-        return json(res, 500, { error: String(error?.message || error) })
-      } finally {
-        busy = false
+        res.write('event: hello\ndata: {"ok":true}\n\n')
+        sseClients.add(res)
+        const ping = setInterval(() => {
+          try {
+            res.write(': ping\n\n')
+          } catch {
+            sseClients.delete(res)
+          }
+        }, 15000)
+        ping.unref?.()
+        req.on('close', () => {
+          clearInterval(ping)
+          sseClients.delete(res)
+        })
+        return undefined
       }
+
+      // ---------------------------------------------------------------- 设置 / 插件
+      if (method === 'GET' && path === '/api/settings') {
+        return json(res, 200, { ok: true, config: redactConfig(app.config), configFile: app.configFile, configError: app.configError, paths: app.paths })
+      }
+      if ((method === 'POST' || method === 'PUT') && path === '/api/settings') {
+        const body = await readBody(req)
+        if (!body || typeof body !== 'object') return fail(res, 400, 'EXPECTED_OBJECT')
+        const result = await app.applySettings(body)
+        return json(res, 200, result)
+      }
+      if (method === 'POST' && path === '/api/plugin/install') {
+        const body = await readBody(req)
+        return json(res, 200, { ok: true, ...(await app.installPlugin({ copy: body?.copy === true })) })
+      }
+      if (method === 'POST' && path === '/api/plugin/update') {
+        const body = await readBody(req)
+        const result = await app.updatePlugin({ allowRestart: body?.allowRestart === true })
+        return json(res, 200, { ok: result.ok, ...result })
+      }
+      if (method === 'POST' && path === '/api/plugin/reload') {
+        const body = await readBody(req)
+        const result = await app.reloadPlugin({ allowRestart: body?.allowRestart === true })
+        return json(res, 200, { ok: result.ok, ...result })
+      }
+      if (method === 'GET' && path === '/api/dsh/discover') {
+        return json(res, 200, { ok: true, ...(await app.discoverDsh()) })
+      }
+
+      return fail(res, 404, 'NOT_FOUND', path)
+    } catch (error) {
+      const code = error?.code || 'INTERNAL'
+      const status = code === 'ORCHESTRATOR_NOT_RUNNING' ? 409 : code === 'GAME_NOT_IN_SESSION' || code === 'GAME_NOT_RUNNING' ? 503 : 500
+      log('http.error', { path, code, error: String(error?.message || error) })
+      return fail(res, status, code, { message: String(error?.message || error), detail: error?.detail || null })
     }
-    if (req.method === 'POST' && url.pathname === '/api/livechat/ingest') {
-      const body = await readBody(req)
-      if (!body?.text) return json(res, 400, { error: 'expected { text }' })
-      return json(res, 200, bus.ingest(body))
-    }
-    if (req.method === 'GET' && url.pathname === '/api/livechat/poll') {
-      return json(res, 200, bus.poll(Number(url.searchParams.get('since') || 0)))
-    }
-    if (req.method === 'POST' && url.pathname === '/api/livechat/reply') {
-      const body = await readBody(req)
-      if (!body?.text) return json(res, 400, { error: 'expected { text }' })
-      return json(res, 200, bus.say(body.text))
-    }
-    if (req.method === 'GET' && url.pathname === '/api/livechat/stream') {
-      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-store' })
-      res.write('event: hello\ndata: {}\n\n')
-      const unsubscribe = bus.subscribe((event) => {
-        const name = event.type === 'danmaku' ? 'danmaku' : 'reply'
-        res.write(`event: ${name}\ndata: ${JSON.stringify(event.message || event.reply)}\n\n`)
-      })
-      req.on('close', unsubscribe)
-      return undefined
-    }
-    return json(res, 404, { error: 'not found' })
   })
+
+  // 聊天/世界事件推给 SSE 客户端（编排器可能在 serve 之后才启动，所以惰性挂载）
+  let attachedChat = null
+  const attachIfNeeded = () => {
+    const chat = app.orchestrator?.chat
+    if (!chat || chat === attachedChat) return
+    attachedChat = chat
+    chat.on('in', (row) => broadcast('chat', { direction: 'in', ...row }))
+    chat.on('out', (row) => broadcast('chat', { direction: 'out', ...row }))
+  }
+  const attachTimer = setInterval(attachIfNeeded, 2000)
+  attachTimer.unref?.()
 
   return new Promise((resolve, reject) => {
     server.once('error', reject)
@@ -414,6 +434,18 @@ export function startServer({ config, orchestrator, engine, bus, scheduler = nul
       const actual = server.address()?.port ?? port
       const address = `http://127.0.0.1:${actual}`
       log(`面板：${address}`)
+      attachIfNeeded()
+      // 一次注入后自动续上：游戏在跑就保证桥可用，进局就自动接管
+      app.startWatcher()
+      // 每次启动：更新并热重载 DSH 插件（不杀 DSH）
+      if (app.config?.dshPlugin?.autoInstall !== false) {
+        app
+          .updatePlugin({ allowRestart: false })
+          .then((result) => {
+            for (const message of result.messages || []) log(`[dsh-plugin] ${message}`)
+          })
+          .catch((error) => log('[dsh-plugin] 更新失败', { error: String(error?.message || error) }))
+      }
       resolve({ server, url: address, close: () => server.close() })
     })
   })

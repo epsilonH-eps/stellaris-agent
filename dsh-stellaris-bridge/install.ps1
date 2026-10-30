@@ -1,37 +1,37 @@
 ﻿#requires -Version 5.1
 <#
-  把 dsh-stellaris-bridge 挂进 DSH profile。
-  只改 profile 的 package.json + 建一个 node_modules junction；
-  不重启当前 DSH，下次启动时加载。
+  把 dsh-stellaris-bridge 挂进 DSH profile（幂等）。
+
+  说明：这个脚本只是 `stellaris-agent plugin install` 的薄包装，
+  实际逻辑在 agent/lib/dsh-plugin.mjs（Node 实现，便于 GUI/服务端复用）。
+
+  装完/改完插件后：
+    - 只改 lib/handler.mjs  → POST /api/stellaris-orchestrator/reload 即可
+                              （程序启动时也会自动尝试重载）
+    - 改了 index.js（shim） → 需要重启 DSH
 #>
 param(
-  [string]$Profile = "$env:USERPROFILE\.dsh\profiles\desktop",
-  [string]$PluginDir = "D:\stellaris-agent\dsh-stellaris-bridge"
+  [string]$Profile = '',
+  [string]$PluginDir = (Split-Path $PSScriptRoot -Parent)
 )
+
 $ErrorActionPreference = 'Stop'
-$pkgFile = Join-Path $Profile 'package.json'
-if (-not (Test-Path $pkgFile)) { throw "profile package.json 不存在：$pkgFile" }
-if (-not (Test-Path (Join-Path $PluginDir 'index.js'))) { throw "插件目录不对：$PluginDir" }
+$root = Split-Path $PluginDir -Parent
+$bin = Join-Path $root 'agent\bin\stellaris-agent.mjs'
 
-$backup = "$pkgFile.before-stellaris-bridge"
-if (-not (Test-Path $backup)) { Copy-Item $pkgFile $backup }
+$node = $env:STELLARIS_AGENT_NODE
+if (-not $node) {
+  $cmd = Get-Command node -ErrorAction SilentlyContinue
+  if ($cmd) { $node = $cmd.Source }
+}
+if (-not $node) {
+  $bundled = Join-Path $root 'agent\runtime\node.exe'
+  if (Test-Path $bundled) { $node = $bundled }
+}
+if (-not $node) { throw '找不到 node；设置 STELLARIS_AGENT_NODE 或把 node 放进 PATH。' }
+if (-not (Test-Path $bin)) { throw "找不到 CLI：$bin" }
 
-$pkg = Get-Content $pkgFile -Raw | ConvertFrom-Json
-if (-not $pkg.dependencies) { $pkg.dependencies = [pscustomobject]@{} }
-$pkg.dependencies | Add-Member -NotePropertyName 'dsh-stellaris-bridge' -NotePropertyValue ("link:" + $PluginDir.Replace('\','/')) -Force
-if (-not $pkg.dsh) { $pkg.dsh = [pscustomobject]@{ profile = [pscustomobject]@{ bundles = @() } } }
-if (-not $pkg.dsh.profile) { $pkg.dsh.profile = [pscustomobject]@{ bundles = @() } }
-$bundles = @($pkg.dsh.profile.bundles)
-if ($bundles -notcontains 'dsh-stellaris-bridge') { $bundles += 'dsh-stellaris-bridge' }
-$pkg.dsh.profile.bundles = $bundles
-$pkg | ConvertTo-Json -Depth 20 | Set-Content $pkgFile -Encoding utf8
-
-$link = Join-Path $Profile 'node_modules\dsh-stellaris-bridge'
-if (Test-Path $link) { Remove-Item $link -Force -Recurse }
-New-Item -ItemType Junction -Path $link -Target $PluginDir | Out-Null
-
-Write-Host '已挂载：'
-Write-Host "  dependency: link:$PluginDir"
-Write-Host "  bundle:     dsh-stellaris-bridge"
-Write-Host "  junction:   $link"
-Write-Host '重启 DSH 后生效；路由：/api/stellaris-bridge/health'
+$argsList = @($bin, 'plugin', 'install')
+if ($Profile) { $argsList += @('--profile', $Profile) }
+& $node @argsList
+exit $LASTEXITCODE
