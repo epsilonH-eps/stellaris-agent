@@ -10,7 +10,15 @@
     "build:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-exe.ps1",
     "install:dsh": "powershell -NoProfile -ExecutionPolicy Bypass -File dsh-stellaris-bridge/install.ps1"
   },
-  "keywords": ["stellaris", "deepseek", "dsh", "stellantis", "ai"],
+  "keywords": [
+    "stellaris",
+    "deepseek",
+    "dsh",
+    "stellaris",
+    "ai"
+  ],
   "license": "MIT",
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }

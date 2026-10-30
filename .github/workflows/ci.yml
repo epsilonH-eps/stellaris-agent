@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: node --check
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -File | Where-Object { $_.Extension -in '.mjs','.js' } |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\' } |
+            ForEach-Object {
+              node --check $_.FullName
+              if ($LASTEXITCODE -ne 0) { $bad++; Write-Host "FAIL $($_.FullName)" }
+            }
+          if ($bad -gt 0) { exit 1 }
+      - name: json parse
+        shell: pwsh
+        run: |
+          Get-ChildItem -Recurse -File -Filter *.json |
+            Where-Object { $_.FullName -notmatch '\\node_modules\\|\\runtime\\' } |
+            ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json | Out-Null }
