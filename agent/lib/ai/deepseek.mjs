@@ -27,7 +27,7 @@ export class DeepSeekBackend {
     this.log = log
     this.apiKey = String(settings.apiKey || '').trim()
     this.baseUrl = String(settings.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, '')
-    this.model = settings.model || 'deepseek-chat'
+    this.model = settings.model || 'deepseek-flash'
     this.timeoutMs = Number(settings.timeoutMs || 120000)
     this.retries = Number(settings.retries ?? 2)
     this.fetchImpl = fetchImpl || globalThis.fetch

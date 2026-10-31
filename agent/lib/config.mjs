@@ -72,7 +72,7 @@ export const DEFAULT_CONFIG = {
     deepseek: {
       apiKey: '',
       baseUrl: 'https://api.deepseek.com',
-      model: 'deepseek-chat',
+      model: 'deepseek-flash',
       temperature: 0.3,
       maxTokens: 4096,
       timeoutMs: 120000,

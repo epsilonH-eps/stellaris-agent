@@ -20,6 +20,8 @@ const TEAM_PREFIX = [
   '',
 ].join('\n')
 
+const DSH_MODEL = 'deepseek-flash' // DSH 里显示为 DeepSeek V4.1 Flash
+
 function conversationCwd() {
   return process.env.STELLARIS_DSH_CWD || process.cwd()
 }
@@ -172,11 +174,11 @@ export async function createHandler(ctx) {
     try {
       const selection = defaultModelService()?.currentSelection?.()
       if (selection?.provider && selection?.model) {
-        agentOptions = { provider: selection.provider, model: selection.model }
+        agentOptions = { provider: selection.provider, model: DSH_MODEL }
         if (reasoningEffort) agentOptions.reasoningEffort = String(reasoningEffort)
         else if (selection.reasoningEffort) agentOptions.reasoningEffort = selection.reasoningEffort
       } else if (reasoningEffort) {
-        agentOptions = { reasoningEffort: String(reasoningEffort) }
+        agentOptions = { provider: 'deepseek-official', model: DSH_MODEL, reasoningEffort: String(reasoningEffort) }
       }
     } catch {
       agentOptions = reasoningEffort ? { reasoningEffort: String(reasoningEffort) } : null
@@ -269,7 +271,11 @@ export async function createHandler(ctx) {
         request: {
           prompt: [{ type: 'text', text: String(prompt || '') }],
           parent: owner,
-          ...(reasoningEffort ? { agentOptions: { reasoningEffort: String(reasoningEffort) } } : {}),
+          ...(reasoningEffort ? { agentOptions: {
+            provider: mainRoute?.provider || 'deepseek-official',
+            model: mainRoute?.model || DSH_MODEL,
+            reasoningEffort: String(reasoningEffort),
+          } } : {}),
         },
         ...(childId ? { childId } : {}),
         signal: controller.signal,
