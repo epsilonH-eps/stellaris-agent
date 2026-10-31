@@ -15,6 +15,7 @@
  * @module stellaris-agent/reader
  */
 import { listMods, modsDigest } from './mods.mjs'
+import { loadTraditionNodes } from './traditions.mjs'
 import { resolveActiveChains } from './events.mjs'
 import { readSaveState } from './save.mjs'
 
@@ -92,12 +93,13 @@ export class Reader {
    * @param {Function} [options.log]
    * @param {{userDir:string, installDir:string, saveDir:string}} [options.paths]
    */
-  constructor({ bridge, config, home, log = () => {}, paths = {} }) {
+  constructor({ bridge, config, home, log = () => {}, paths = {}, modDirs = [] }) {
     this.bridge = bridge
     this.config = config
     this.home = home
     this.log = log
     this.paths = paths
+    this.modDirs = modDirs
     this.unsupported = new Set()
     this.errors = []
     this.stats = { calls: 0, ok: 0, failed: 0, lastAt: null }
@@ -210,6 +212,15 @@ export class Reader {
     }
 
     world.colonies = extractColonies(world).filter((colony) => colony.colony_id === undefined || isValidColonyId(colony.colony_id))
+    // 原生 get_traditions 只有 unlocked_count / adopt 节点，补上树内节点定义
+    if (world.traditions && typeof world.traditions === 'object' && !Array.isArray(world.traditions)) {
+      try {
+        const nodes = loadTraditionNodes(this.paths.installDir || '', { modDirs: this.modDirs })
+        if (nodes && Object.keys(nodes).length) world.traditions = { ...world.traditions, nodes }
+      } catch (error) {
+        this.log('reader.traditions.nodes.failed', { error: String(error?.message || error) })
+      }
+    }
     const overviewCapital = Number(world.galaxy?.player?.capital_system_id)
     if (Number.isFinite(overviewCapital) && overviewCapital > 0) world.capitalSystemId = overviewCapital
     world.fleetsAll = extractFleets(world)

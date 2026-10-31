@@ -35,7 +35,17 @@ function looseEqual(left, right) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
 
+// 这些错误是引擎前置条件/参数不存在，重试同一个动作不会变好
+const NO_RETRY_CODES = new Set(['-32062', '-32084', '-32044'])
+
+function bridgeMethod(method) {
+  return method === 'cancel_monthly_trade' ? 'set_monthly_trade' : method
+}
+
 function bridgeParams(method, params = {}) {
+  if (method === 'cancel_monthly_trade') {
+    return { cancel: true, order_id: Number(params.order_id) }
+  }
   if (method !== 'select_research' && method !== 'cancel_research') return params
   const copy = { ...params }
   const slot = String(copy.slot ?? copy.area ?? '').toLowerCase()
@@ -43,6 +53,14 @@ function bridgeParams(method, params = {}) {
   delete copy.slot
   if (Number.isInteger(area) && area >= 0 && area <= 2) copy.area = area
   return copy
+}
+
+function rejectedResponse(response) {
+  if (!response || typeof response !== 'object') return null
+  if (response.success !== false && response.ok !== false) return null
+  const error = new Error(response.error || response.message || 'action rejected by the game')
+  error.code = response.code || 'ACTION_REJECTED'
+  return error
 }
 
 export class Executor extends EventEmitter {
@@ -272,10 +290,13 @@ export class Executor extends EventEmitter {
     this.emit('action.start', { jobId: job.jobId, index, method, params })
 
     let lastError = null
+    let lastCode = null
     for (let attempt = 1; attempt <= this.settings.maxAttempts; attempt += 1) {
       const startedAt = Date.now()
       try {
-        const response = await this.bridge.request(method, bridgeParams(method, params))
+        const response = await this.bridge.request(bridgeMethod(method), bridgeParams(method, params))
+        const rejected = rejectedResponse(response)
+        if (rejected) throw rejected
         let verify = null
         if (this.settings.verify && spec) {
           verify = await this._verify(spec, params)
@@ -300,9 +321,11 @@ export class Executor extends EventEmitter {
         }
       } catch (error) {
         lastError = String(error?.message || error)
+        lastCode = error?.code ? String(error.code) : null
         row.attempts.push({ attempt, ok: false, ms: Date.now() - startedAt, error: lastError, code: error?.code || null })
         this.log('executor.action.error', { method, attempt, error: lastError, code: error?.code || null })
       }
+      if (lastCode && NO_RETRY_CODES.has(lastCode)) break
       if (attempt < this.settings.maxAttempts) await sleep(this.settings.retryDelayMs * attempt)
     }
 

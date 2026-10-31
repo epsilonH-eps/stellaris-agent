@@ -94,6 +94,9 @@ export class Orchestrator {
     this.mainSave = null
     this.saveTimer = null
     this.switchingSave = false
+    this.unitActive = 0
+    this.unitWaiters = []
+    this.unitPending = new Set()
     this.eventQueue = []
     this.eventRunning = false
     this.unitIntervals = new Map()
@@ -171,7 +174,8 @@ export class Orchestrator {
     }).build()
     this.log('orchestrator.events', this.eventGraph.status())
 
-    this.reader = new Reader({ bridge: this.bridge, config: this.config, home: this.home, log: this.log, paths: this.paths })
+    const modDirs = (mods.enabledMods || []).map((mod) => mod.path).filter(Boolean)
+    this.reader = new Reader({ bridge: this.bridge, config: this.config, home: this.home, log: this.log, paths: this.paths, modDirs })
     this.world = new World({ reader: this.reader, config: this.config, home: this.home, log: this.log, eventGraph: this.eventGraph })
     this.world.on('trigger', (trigger) => this.handleTrigger(trigger))
     this.world.on('completion', (event) => this.main?.observe(`完成事件 ${event.type}：${JSON.stringify(event.detail)}`))
@@ -399,6 +403,30 @@ export class Orchestrator {
   }
 
   /**
+   * 单位/事件子会话并发槽位：DSH 主会话下最多 8 个 active child，
+   * 这里默认只放 5 个（主会话/事件/重试留余量），避免 "subagent limit reached"。
+   * @returns {Promise<Function>} release
+   */
+  acquireUnitSlot() {
+    const max = Math.max(1, Number(this.config?.ai?.unit?.maxConcurrent ?? 5))
+    return new Promise((resolve) => {
+      const grant = () => {
+        this.unitActive += 1
+        let released = false
+        resolve(() => {
+          if (released) return
+          released = true
+          this.unitActive -= 1
+          const next = this.unitWaiters.shift()
+          if (next) next()
+        })
+      }
+      if (this.unitActive < max) grant()
+      else this.unitWaiters.push(grant)
+    })
+  }
+
+  /**
    * 派发一个单位子会话。
    * @returns {Promise<object>} 子会话报告
    */
@@ -406,7 +434,7 @@ export class Orchestrator {
     const session = this.units.get(unitId)
     if (!session) return { ok: false, status: 'error', unit: unitId, error: 'UNKNOWN_UNIT' }
     if (!this.backendInfo?.ok) return { ok: false, status: 'error', unit: unitId, error: 'AI_UNAVAILABLE', detail: this.backendInfo?.error }
-    if (session.running) return { ok: false, status: 'busy', unit: unitId }
+    if (session.running || this.unitPending.has(unitId)) return { ok: false, status: 'busy', unit: unitId }
     const cooldown = Math.max(0, Number(this.unitIntervals.get(unitId) ?? this.config?.ai?.unit?.intervalSeconds ?? 45)) * 1000
     if (!force && cooldown > 0 && Date.now() - (session.lastRunAt || 0) < cooldown) {
       this.log('orchestrator.dispatch.cooldown', { unit: unitId, waitMs: cooldown - (Date.now() - session.lastRunAt) })
@@ -414,6 +442,8 @@ export class Orchestrator {
     }
     this.stats.unitRuns += 1
     const startedAt = Date.now()
+    this.unitPending.add(unitId)
+    const release = await this.acquireUnitSlot()
     try {
       return await session.run({ goal, reason })
     } catch (error) {
@@ -437,6 +467,9 @@ export class Orchestrator {
       }
       this.onUnitReport(report, session)
       return { ok: false, ...report, error: detail }
+    } finally {
+      this.unitPending.delete(unitId)
+      release()
     }
   }
 
@@ -580,7 +613,13 @@ export class Orchestrator {
       }
       const goal = this.eventGoal(trigger, unit)
       this.chat?.outbound({ text: `处理特殊事件：${unit.name}`, id: 'system', kind: 'event' })
-      const report = await session.run({ goal, reason: `trigger:${trigger.type}` })
+      const release = await this.acquireUnitSlot()
+      let report
+      try {
+        report = await session.run({ goal, reason: `trigger:${trigger.type}` })
+      } finally {
+        release()
+      }
       if (pausedForEvent && this.config?.executor?.autoResume !== false) {
         await this.executor.resume('event-done').catch(() => {})
       }

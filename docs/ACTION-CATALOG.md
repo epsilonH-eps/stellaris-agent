@@ -3,7 +3,7 @@
 > 生成命令：`node tools/gen-actions-doc.mjs`。唯一来源：[`agent/lib/actions.mjs`](../agent/lib/actions.mjs)。
 > 不要手改本文件。
 
-共 **59** 个写动作、**44** 个读取方法。
+共 **60** 个写动作、**44** 个读取方法。
 
 `confidence`：
 
@@ -18,7 +18,7 @@
 | `research` | 国家科研 | 2 |
 | `council` | 国家内阁 | 6 |
 | `laws` | 法令与物种权利 | 3 |
-| `economy` | 经济与市场 | 2 |
+| `economy` | 经济与市场 | 4 |
 | `diplomacy` | 外交与战争 | 7 |
 | `fleet` | 舰队 | 15 |
 | `planet` | 星球 | 17 |
@@ -63,6 +63,8 @@
 | --- | --- | --- | --- | --- | --- |
 | `market_trade` | `resource: string`<br>`amount: number`<br>`is_buy: bool` | `resource`<br>`amount`<br>`is_buy` | 银河市场买卖资源 | soft `get_status` | verified |
 | `set_monthly_trade` | `resource: string`<br>`amount: number`<br>`is_buy: bool` | `resource`<br>`amount`<br>`is_buy` | 设置每月自动买卖 | soft `get_market` | inferred |
+| `cancel_monthly_trade` | `order_id: int` | `order_id` | 取消一条每月贸易挂单（order_id 见 get_market.monthly_trades） | soft `get_market` | verified |
+| `build_district` | `planet_id: int`<br>`district_key: string` | `planet_id`<br>`district_key` | 建造区划 | soft `get_planet_details` | verified |
 
 ## 外交与战争（`diplomacy`）
 

@@ -25,7 +25,7 @@ export const UNIT_TYPES = {
     actions: ['hire_leader', 'dismiss_leader', 'assign_leader', 'set_council_agenda', 'launch_council_agenda', 'select_leader_trait'],
   },
   laws: { label: '法令与物种权利', actions: ['toggle_edict', 'adopt_tradition', 'set_species_rights'] },
-  economy: { label: '经济与市场', actions: ['market_trade', 'set_monthly_trade'] },
+  economy: { label: '经济与市场', actions: ['market_trade', 'set_monthly_trade', 'cancel_monthly_trade', 'build_district'] },
   diplomacy: {
     label: '外交与战争',
     actions: ['diplomacy_action', 'respond_diplomacy', 'set_defender_war_goal', 'close_war_goals', 'improve_relations', 'establish_embassy', 'add_system_claim'],
@@ -163,6 +163,12 @@ export const ACTIONS = [
     method: 'set_monthly_trade', unit: 'economy', confidence: 'inferred',
     params: { resource: T.string, amount: T.number, is_buy: T.bool }, required: ['resource', 'amount', 'is_buy'],
     desc: '设置每月自动买卖',
+    verify: { read: 'get_market', soft: true },
+  },
+  {
+    method: 'cancel_monthly_trade', unit: 'economy', confidence: 'verified',
+    params: { order_id: T.int }, required: ['order_id'],
+    desc: '取消一条每月贸易挂单（order_id 见 get_market.monthly_trades）',
     verify: { read: 'get_market', soft: true },
   },
 

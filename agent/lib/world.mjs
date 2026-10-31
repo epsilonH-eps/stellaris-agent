@@ -223,6 +223,70 @@ function indexBy(rows) {
   return out
 }
 
+/**
+ * 轻量刷新（deep=false）只读全局/殖民地摘要，会丢掉 deep 才有的字段。
+ * 不合并的话，单位子会话会在两次 deep 刷新之间看到 fleetSystems=null、
+ * nearbySystems=[]、殖民地 details 为空——舰队/星球就会以为"没有数据"。
+ */
+export function mergeDeepContext(previous, next) {
+  if (!previous) return next
+  const merged = { ...next }
+  const keep = [
+    'galaxyMap',
+    'fleetsDetail',
+    'fleetSystems',
+    'megaScan',
+    'mods',
+    'save',
+    'eventChains',
+    'diplomacyOptions',
+    'warGoals',
+    'designs',
+    'designCatalog',
+    'fleetSystems',
+  ]
+  for (const key of keep) {
+    if (merged[key] === undefined || merged[key] === null) merged[key] = previous[key]
+  }
+  merged.systems = { ...(previous.systems || {}), ...(next.systems || {}) }
+  if (merged.traditions && previous.traditions?.nodes) {
+    merged.traditions = { ...merged.traditions, nodes: merged.traditions.nodes || previous.traditions.nodes }
+  } else if (!merged.traditions && previous.traditions?.nodes) {
+    merged.traditions = previous.traditions
+  }
+
+  const previousColonies = new Map((previous.colonies || []).map((colony) => [colony.planet_id, colony]))
+  merged.colonies = (next.colonies || []).map((colony) => {
+    const old = previousColonies.get(colony.planet_id)
+    if (!old) return colony
+    const row = { ...old, ...colony }
+    for (const key of [
+      'details',
+      'jobs',
+      'armies',
+      'buildableBuildings',
+      'buildableDistricts',
+      'districtZones',
+      'clearableBlockers',
+      'decisions',
+      'features',
+      'terraforming',
+    ]) {
+      if ((row[key] === undefined || row[key] === null) && old[key] !== undefined && old[key] !== null) row[key] = old[key]
+    }
+    return row
+  })
+
+  const previousSystems = previous.fleetSystems || {}
+  for (const fleet of merged.fleetsAll || []) {
+    if (fleet.system_id === undefined || fleet.system_id === null) {
+      const systemId = previousSystems[fleet.fleet_id]
+      if (systemId !== undefined && systemId !== null) fleet.system_id = systemId
+    }
+  }
+  return merged
+}
+
 export class World extends EventEmitter {
   /**
    * @param {object} options
@@ -268,12 +332,13 @@ export class World extends EventEmitter {
         eventGraph: this.eventGraph,
       })
       const previous = this.current
-      this.current = next
+      const current = shouldDeep ? next : mergeDeepContext(previous, next)
+      this.current = current
       this.tick += 1
       this.lastError = null
-      this.emit('world', next)
+      this.emit('world', current)
       if (previous) {
-        const delta = diffWorld(previous, next)
+        const delta = diffWorld(previous, current)
         if (delta.events.length) {
           this.completions.push(...delta.events)
           if (this.completions.length > 300) this.completions = this.completions.slice(-300)
@@ -289,12 +354,12 @@ export class World extends EventEmitter {
       this.log('world.refresh', {
         deep: shouldDeep,
         ms: next.readMs,
-        colonies: next.colonies.length,
-        fleets: next.fleetsAll.length,
-        events: next.activeEvents.length,
+        colonies: current.colonies.length,
+        fleets: current.fleetsAll.length,
+        events: current.activeEvents.length,
         triggers: this.triggers.length,
       })
-      return next
+      return current
     } catch (error) {
       this.lastError = String(error?.message || error)
       this.log('world.refresh.failed', { error: this.lastError })

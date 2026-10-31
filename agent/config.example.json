@@ -65,7 +65,8 @@
       "intervalSeconds": 45,
       "maxActionsPerTurn": 4,
       "attempts": 3,
-      "historyMessages": 18
+      "historyMessages": 18,
+      "maxConcurrent": 5
     },
     "event": {
       "maxActionsPerTurn": 3,

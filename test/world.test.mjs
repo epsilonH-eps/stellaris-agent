@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { diffWorld } from '../agent/lib/world.mjs'
+import { diffWorld, mergeDeepContext } from '../agent/lib/world.mjs'
 
 function world(overrides = {}) {
   return {
@@ -23,6 +23,34 @@ function world(overrides = {}) {
     ...overrides,
   }
 }
+
+test('轻量刷新保留 deep 字段：舰队位置 / 银河图 / 殖民地明细', () => {
+  const previous = {
+    colonies: [{ planet_id: 3, name: 'A', details: { colony_id: 0, system_id: 7 }, jobs: { jobs: [] } }],
+    fleetsAll: [{ fleet_id: 1, system_id: 255 }],
+    galaxyMap: { rows: [[255, 'F', 0, 0, null, 4, 0, 'SF']] },
+    fleetSystems: { 1: 255 },
+    systems: { 255: { id: 255 } },
+    mods: { total: 1 },
+    traditions: { nodes: { tradition_adaptability: [{ key: 'tr_adaptability_adopt' }] } },
+  }
+  const light = {
+    colonies: [{ planet_id: 3, name: 'A2' }],
+    fleetsAll: [{ fleet_id: 1, system_id: null }],
+    galaxyMap: null,
+    fleetSystems: null,
+    traditions: { summary: { next_tradition_cost: 100 } },
+  }
+  const merged = mergeDeepContext(previous, light)
+  assert.equal(merged.galaxyMap.rows.length, 1)
+  assert.equal(merged.fleetSystems[1], 255)
+  assert.equal(merged.fleetsAll[0].system_id, 255)
+  assert.equal(merged.colonies[0].name, 'A2')
+  assert.equal(merged.colonies[0].details.system_id, 7)
+  assert.equal(merged.systems[255].id, 255)
+  assert.equal(merged.mods.total, 1)
+  assert.equal(merged.traditions.nodes.tradition_adaptability.length, 1)
+})
 
 test('研究：开始与完成', () => {
   const prev = world()

@@ -259,11 +259,27 @@ export class UnitSession {
           this.session.pushObservation(`动作校验失败，未执行：\n- ${validated.errors.join('\n- ')}`)
           continue
         }
-        this.log('unit.submit', { unit: this.id, actions: validated.actions.map((action) => action.method), attempt })
+        const precheck = this.precheckActions(validated.actions, this.getWorld())
+        if (precheck.errors.length && !precheck.allowed.length) {
+          return this._report({
+            status: 'blocked',
+            say: decision.say || '动作前置条件不满足',
+            cause: precheck.errors.join('；'),
+            suggestion: '不要重复提交同一动作；等前置条件满足或换目标。',
+            attempts: attempt,
+            actions: [],
+            startedAt: started,
+          })
+        }
+        if (precheck.errors.length) {
+          this.session.pushObservation(`已跳过前置条件不满足的动作：\n- ${precheck.errors.join('\n- ')}`)
+        }
+        const runnable = precheck.allowed
+        this.log('unit.submit', { unit: this.id, actions: runnable.map((action) => action.method), attempt })
         lastResult = await this.executor.submit({
           unit: this.id,
           source: this.isEvent ? 'event' : 'unit',
-          actions: validated.actions.map((action) => ({ method: action.method, params: action.params })),
+          actions: runnable.map((action) => ({ method: action.method, params: action.params })),
           meta: { goal: this.goal, reason },
         })
         if (lastResult.ok) {
@@ -309,6 +325,22 @@ export class UnitSession {
       this.log('unit.analyze.failed', { unit: this.id, error: String(error?.message || error) })
       return null
     }
+  }
+
+  precheckActions(actions, world) {
+    const errors = []
+    const allowed = []
+    for (const action of actions) {
+      if (action.method === 'toggle_edict' && action.params?.enabled !== false) {
+        const fund = Number(world?.edicts?.summary?.edict_fund)
+        if (Number.isFinite(fund) && fund <= 0) {
+          errors.push(`toggle_edict(${action.params?.edict_key || '?'}) 被跳过：edict_fund=0，引擎会返回 -32084`)
+          continue
+        }
+      }
+      allowed.push(action)
+    }
+    return { allowed, errors }
   }
 
   _report({ status, say, cause = '', suggestion = '', evidence = '', attempts, actions, result = null, startedAt }) {

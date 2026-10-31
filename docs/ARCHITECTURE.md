@@ -328,6 +328,14 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
   `<home>/workspace`，`meta.title` 用存档 `meta.name`（帝国名），并用
   `workspaceRegistry.create()` 注册成 DSH 项目“群星参谋”；同一个存档的 autosave 不会换主会话。
 
+### 轻量刷新与 deep 字段
+
+`World.refresh()` 默认每 6 次做一次 deep 读取；中间的轻量读取只读摘要，会丢掉
+`fleetSystems`、`galaxyMap`、殖民地 `details`、传统节点等 deep 字段。`mergeDeepContext()`
+会在轻量刷新时保留这些字段（并按 `planet_id`/`fleet_id` 合并），否则舰队会看到
+`fleetSystems=null`、星球会看到 `capacity`/区划为空。`ai.unit.maxConcurrent`（默认 5）
+限制单位/事件子会话并发，避免 DSH 的 `active child limit: 8`。
+
 ### 人格与 voice
 
 - `agent/lib/persona.mjs`：10 个 0-100 属性、7 个预设、`normalizePersona`、`personaPrompt`，
@@ -362,7 +370,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 119 项 node:test
+npm test                      # 124 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

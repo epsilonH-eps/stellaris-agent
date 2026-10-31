@@ -157,6 +157,33 @@ test('低于阈值不暂停', async () => {
   assert.equal(bridge.count('set_paused'), 0)
 })
 
+test('取消月度贸易：映射到 set_monthly_trade(cancel, order_id)', async () => {
+  const bridge = new FakeBridge({ set_monthly_trade: () => ({ success: true }) })
+  const executor = new Executor({ bridge, config: executorConfig() })
+  const result = await executor.submit({
+    unit: 'economy',
+    actions: [{ method: 'cancel_monthly_trade', params: { order_id: 3 } }],
+  })
+  assert.equal(result.ok, true)
+  const call = bridge.calls.find((row) => row.method === 'set_monthly_trade')
+  assert.deepEqual(call.params, { cancel: true, order_id: 3 })
+})
+
+test('业务失败：桥返回 success:false 不能当成功', async () => {
+  const bridge = new FakeBridge({
+    diplomacy_action: () => ({ success: false, error: 'Native diplomacy conditions not met' }),
+  })
+  const executor = new Executor({ bridge, config: executorConfig({ maxAttempts: 2 }) })
+  const result = await executor.submit({
+    unit: 'diplomacy',
+    actions: [{ method: 'diplomacy_action', params: { country_id: 1, action: 'improve_relations' } }],
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.actions[0].error, /Native diplomacy conditions not met/)
+  assert.equal(result.actions[0].status, 'failed')
+  assert.equal(result.actions[0].attempts.length, 2)
+})
+
 test('科研动作：slot 映射为桥接要求的 area 整数（0/1/2）', async () => {
   const bridge = new FakeBridge({
     select_research: () => ({ ok: true }),

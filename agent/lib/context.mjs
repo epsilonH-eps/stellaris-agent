@@ -188,17 +188,52 @@ export function unitContext(unit, world) {
         research: world.research,
         unity: world.resources?.unity ?? null,
       }
-    case 'laws':
+    case 'laws': {
+      const traditions = world.traditions || {}
+      const adopted = new Set(asArray(traditions.adopted_trees).map((tree) => tree.key))
+      const nodes = {}
+      for (const [treeKey, list] of Object.entries(traditions.nodes || {})) {
+        if (adopted.has(treeKey)) nodes[treeKey] = list
+      }
       return {
         date: world.date,
         edicts: world.edicts,
-        traditions: world.traditions,
+        traditions: {
+          summary: traditions.summary,
+          adopted_trees: traditions.adopted_trees,
+          unlocked_traditions: traditions.unlocked_traditions,
+          available_trees: traditions.available_trees,
+          ascension_perks: traditions.ascension_perks,
+          nodes,
+        },
         species: world.species,
         unity: world.resources?.unity ?? null,
         influence: world.resources?.influence ?? null,
       }
+    }
     case 'economy':
-      return { date: world.date, market: world.market, resources: resourceSummary(world.resources), capacity: { naval: world.status?.naval_capacity } }
+      return {
+        date: world.date,
+        market: world.market,
+        resources: resourceSummary(world.resources),
+        capacity: { naval: world.status?.naval_capacity },
+        colonies: asArray(world.colonies).slice(0, 6).map((colony) => ({
+          planet_id: colony.planet_id,
+          colony_id: colony.colony_id ?? null,
+          name: colony.name ?? null,
+          type: colony.type ?? colony.designation ?? null,
+          population: colony.population ?? null,
+          system_id: colony.system_id ?? colony.details?.system_id ?? null,
+          details: colony.details
+            ? {
+                districts: colony.details.districts ?? null,
+                buildings: colony.details.buildings ?? null,
+                buildableDistricts: colony.details.buildableDistricts ?? colony.buildableDistricts ?? null,
+                buildableBuildings: colony.details.buildableBuildings ?? colony.buildableBuildings ?? null,
+              }
+            : null,
+        })),
+      }
     case 'diplomacy':
       return {
         date: world.date,
@@ -211,7 +246,13 @@ export function unitContext(unit, world) {
       }
     case 'fleet': {
       const detail = (world.fleetsDetail || []).find((row) => row.fleet_id === unit.key)
-      const systemId = detail?.system_id ?? detail?.summary?.system_id ?? null
+      const fallbackFleet = (world.fleetsAll || []).find((fleet) => fleet.fleet_id === unit.key)
+      const systemId =
+        detail?.system_id ??
+        detail?.summary?.system_id ??
+        world.fleetSystems?.[unit.key] ??
+        fallbackFleet?.system_id ??
+        null
       const system = Number.isFinite(Number(systemId)) ? world.systems?.[String(systemId)] : null
       const galaxyRows = asArray(world.galaxyMap?.rows).slice(0, 80).map((row) => {
         if (!Array.isArray(row)) return null
@@ -231,12 +272,24 @@ export function unitContext(unit, world) {
           megastructure: text.includes('M'),
         }
       }).filter(Boolean)
+      const galaxyById = new Map(galaxyRows.map((row) => [row.system_id, row]))
+      const systemIdNumber = Number(systemId)
+      const neighborIds = []
+      for (const lane of asArray(world.galaxyMap?.hyperlanes)) {
+        if (!Array.isArray(lane)) continue
+        const [from, to] = lane
+        if (Number(from) === systemIdNumber) neighborIds.push(Number(to))
+        else if (Number(to) === systemIdNumber) neighborIds.push(Number(from))
+      }
+      const neighbors = [...new Set(neighborIds)].map((id) => galaxyById.get(id)).filter(Boolean)
       return {
         date: world.date,
         fleet: detail || (world.fleetsAll || []).find((fleet) => fleet.fleet_id === unit.key) || null,
         system,
+        systemId: Number.isFinite(systemIdNumber) ? systemIdNumber : null,
         fleetSystems: world.fleetSystems || null,
         nearbySystems: galaxyRows,
+        neighbors,
         fleets: (world.fleetsAll || []).map((fleet) => fleetSummary(fleet)),
         designs: asArray(world.designs?.designs || world.designs).slice(0, 20),
         contacts: asArray(world.contacts?.empires).map((empire) => ({ country_id: empire.country_id, name: empire.name })),
