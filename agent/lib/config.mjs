@@ -83,7 +83,7 @@ export const DEFAULT_CONFIG = {
       autoDiscover: true,
       timeoutMs: 600000,
     },
-    main: { intervalSeconds: 120, maxActionsPerTurn: 8, historyMessages: 24, activateOnStart: true },
+    main: { intervalSeconds: 120, maxActionsPerTurn: 8, historyMessages: 24, activateOnStart: true, reasoningEffort: 'medium' },
     unit: { intervalSeconds: 45, maxActionsPerTurn: 4, attempts: 3, historyMessages: 18, maxConcurrent: 5 },
     event: { maxActionsPerTurn: 3, attempts: 2, historyMessages: 12 },
   },

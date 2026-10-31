@@ -59,7 +59,8 @@
       "intervalSeconds": 120,
       "maxActionsPerTurn": 8,
       "historyMessages": 24,
-      "activateOnStart": true
+      "activateOnStart": true,
+      "reasoningEffort": "medium"
     },
     "unit": {
       "intervalSeconds": 45,

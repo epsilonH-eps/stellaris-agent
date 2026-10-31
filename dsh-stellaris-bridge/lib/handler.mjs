@@ -129,7 +129,7 @@ export async function createHandler(ctx) {
    * 主会话专用：在 DSH 里新建一个真正的 session，并复用同一个 Agent。
    * 这样主会话在 DSH 里是一条独立会话，而不是每次 run 都临时 spawn 一个一次性激活。
    */
-  const ensureMainSession = async ({ sessionId = null, workspace = null, saveName = null } = {}) => {
+  const ensureMainSession = async ({ sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const desiredWorkspace = workspace || conversationCwd()
     const desiredTitle = saveName || '群星参谋 · 主会话'
     if (mainAgent && (!sessionId || mainSessionId === sessionId) && mainWorkspace === desiredWorkspace) {
@@ -168,8 +168,19 @@ export async function createHandler(ctx) {
       /* workspace 注册失败不影响 session 创建 */
     }
     let agentOptions = null
-    // 不硬编码模型/推理强度：DSH 的默认模型与推理强度由 DSH 设置控制。
-    // 如果调用方显式传 reasoningEffort，再在下面补进 agentOptions。
+    // 主会话推理强度可选；模型路由跟随 DSH 默认选择。
+    try {
+      const selection = defaultModelService()?.currentSelection?.()
+      if (selection?.provider && selection?.model) {
+        agentOptions = { provider: selection.provider, model: selection.model }
+        if (reasoningEffort) agentOptions.reasoningEffort = String(reasoningEffort)
+        else if (selection.reasoningEffort) agentOptions.reasoningEffort = selection.reasoningEffort
+      } else if (reasoningEffort) {
+        agentOptions = { reasoningEffort: String(reasoningEffort) }
+      }
+    } catch {
+      agentOptions = reasoningEffort ? { reasoningEffort: String(reasoningEffort) } : null
+    }
     if (!agentOptions) {
       try {
         const owner = ctx.agents?.currentInitiator?.() || (ctx.agents?.list?.() || [])[0] || null
@@ -244,7 +255,7 @@ export async function createHandler(ctx) {
     return text
   }
 
-  async function runActivation(prompt, { label = '群星参谋', parent = null, timeoutMs = 600000, childId = null, delivery = 'caller', keepActivation = false } = {}) {
+  async function runActivation(prompt, { label = '群星参谋', parent = null, timeoutMs = 600000, childId = null, delivery = 'caller', keepActivation = false, reasoningEffort = null } = {}) {
     if (typeof ctx.subagents?.startActivation !== 'function') throw new Error('这台 DSH 没有 subagents 服务')
     const owner = parent || (await ensureParent())
     const controller = new AbortController()
@@ -258,6 +269,7 @@ export async function createHandler(ctx) {
         request: {
           prompt: [{ type: 'text', text: String(prompt || '') }],
           parent: owner,
+          ...(reasoningEffort ? { agentOptions: { reasoningEffort: String(reasoningEffort) } } : {}),
         },
         ...(childId ? { childId } : {}),
         signal: controller.signal,
@@ -368,12 +380,12 @@ export async function createHandler(ctx) {
     workers.clear()
   }
 
-  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null } = {}) => {
-    const { agent } = await ensureMainSession({ sessionId, workspace, saveName })
+  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
+    const { agent } = await ensureMainSession({ sessionId, workspace, saveName, reasoningEffort })
     const startedAt = Date.now()
     // activation 的 assistant 文本同时写回主会话日志，保证 DSH 主会话里能看到完整对话。
     appendUser(agent, prompt)
-    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent' })
+    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent', reasoningEffort })
     appendAssistant(agent, result.text)
     return { ...result, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
   }
@@ -382,14 +394,13 @@ export async function createHandler(ctx) {
    * @param {string} prompt
    * @param {{label?:string, timeoutMs?:number, team?:boolean}} [options]
    */
-  const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false, sessionId = null, saveKey = null, workspace = null, saveName = null } = {}) => {
+  const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false, sessionId = null, saveKey = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const rawLabel = String(label || '')
-    // 兼容旧 shim：主会话 id / 工作区 / 帝国名可以编码在 label 里
-    // （main:<sessionId>#<base64url 工作区>#<base64url 帝国名>）。
-    const mainMatch = /^main[:|]([A-Za-z0-9._-]+)(?:#([^#]*))?(?:#([^#]*))?$/.exec(rawLabel)
+    const mainMatch = /^main[:|]([A-Za-z0-9._-]+)(?:#([^#]*))?(?:#([^#]*))?(?:#([^#]*))?$/.exec(rawLabel)
     const labeledSession = mainMatch?.[1] || null
     const labeledWorkspace = decodeToken(mainMatch?.[2])
     const labeledSaveName = decodeToken(mainMatch?.[3])
+    const labeledEffort = decodeToken(mainMatch?.[4])
     const isMain = rawLabel === 'main' || Boolean(labeledSession) || /主会话/.test(rawLabel)
     if (isMain) {
       try {
@@ -398,6 +409,7 @@ export async function createHandler(ctx) {
           sessionId: sessionId || labeledSession,
           workspace: workspace || labeledWorkspace,
           saveName: saveName || labeledSaveName,
+          reasoningEffort: reasoningEffort || labeledEffort,
         })
       } catch (error) {
         lastMainError = String(error?.message || error)
@@ -445,6 +457,7 @@ export async function createHandler(ctx) {
         parent: mainAgent || (await ensureParent()),
         timeoutMs,
         keepActivation: true,
+        reasoningEffort: 'off',
       })
       if (result.childId) workers.set(label, { key: label, sessionId: result.childId, activation: result.activation })
       return {
@@ -460,7 +473,7 @@ export async function createHandler(ctx) {
       console.warn(`[stellaris-bridge] worker activation 失败，回退当前会话：${lastWorkerError}`)
     }
     const owner = await ensureParent()
-    const result = await runActivation(finalPrompt, { label, parent: owner, timeoutMs })
+    const result = await runActivation(finalPrompt, { label, parent: owner, timeoutMs, reasoningEffort: 'off' })
     if (result.childId) workers.set(label, { key: label, sessionId: result.childId })
     return { ...result, team, label, sessionId: result.childId || null, fallback: 'activation' }
   }

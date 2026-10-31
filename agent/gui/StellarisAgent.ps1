@@ -323,9 +323,18 @@ $mainTranscript = New-Text $mainSplit.Panel2
 $mainPanel = New-BottomPanel $tabMain 40
 $mainRefreshBtn = New-Button $mainPanel '刷新' 8 70
 $mainMeta = New-Object System.Windows.Forms.Label
-$mainMeta.SetBounds(90, 10, 920, 22)
+$mainMeta.SetBounds(90, 10, 420, 22)
 $mainMeta.ForeColor = [System.Drawing.Color]::Gray
 $mainPanel.Controls.Add($mainMeta)
+$mainEffortLabel = New-Object System.Windows.Forms.Label
+$mainEffortLabel.SetBounds(520, 10, 70, 22)
+$mainEffortLabel.Text = '推理强度'
+$mainPanel.Controls.Add($mainEffortLabel)
+$mainEffort = New-Object System.Windows.Forms.ComboBox
+$mainEffort.SetBounds(590, 7, 100, 26)
+$mainEffort.DropDownStyle = 'DropDownList'
+foreach ($level in @('off', 'low', 'medium', 'high')) { [void]$mainEffort.Items.Add($level) }
+$mainPanel.Controls.Add($mainEffort)
 
 # ---------------------------------------------------------------- 子会话
 $tabSub = New-TabPage '子会话'
@@ -1069,6 +1078,8 @@ function Load-Settings {
     $setPause.Text = [string]$c.executor.pauseWhenQueuedActions
     $setAttempts.Text = [string]$c.executor.maxAttempts
     $setMainInterval.Text = [string]$c.ai.main.intervalSeconds
+    $mainEffort.SelectedItem = [string]$c.ai.main.reasoningEffort
+    if ($null -eq $mainEffort.SelectedItem) { $mainEffort.SelectedItem = 'medium' }
     $setWatch.Text = [string]$c.bridge.watchSeconds
     $setAutoInject.Checked = [bool]$c.bridge.autoInject
     $setAutoStart.Checked = [bool]$c.bridge.autoStartOrchestrator
@@ -1313,7 +1324,7 @@ $setSaveBtn.Add_Click({
       backend  = [string]$setBackend.SelectedItem
       deepseek = @{ apiKey = $setKey.Text.Trim() }
       dsh      = @{ url = $setDsh.Text.Trim() }
-      main     = @{ intervalSeconds = $intervalValue }
+      main     = @{ intervalSeconds = $intervalValue; reasoningEffort = [string]$mainEffort.SelectedItem }
     }
     executor = @{ pauseWhenQueuedActions = $pauseValue; maxAttempts = $attemptValue }
     bridge   = @{ autoInject = [bool]$setAutoInject.Checked; autoStartOrchestrator = [bool]$setAutoStart.Checked; watchSeconds = $watchValue }

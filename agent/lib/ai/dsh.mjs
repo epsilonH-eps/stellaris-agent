@@ -341,6 +341,10 @@ export class DshBackend {
             this.mainSession.saveName
               ? Buffer.from(this.mainSession.saveName, 'utf8').toString('base64url')
               : ''
+          }${
+            this.config?.ai?.main?.reasoningEffort
+              ? `#${Buffer.from(String(this.config.ai.main.reasoningEffort), 'utf8').toString('base64url')}`
+              : ''
           }`
         : label
       const payload = await this._post(team ? '/team' : '/run', {
@@ -353,7 +357,9 @@ export class DshBackend {
               saveKey: this.mainSession.saveKey,
               saveFolder: this.mainSession.saveFolder,
               saveName: this.mainSession.saveName,
-              workspace: this.mainSession.workspace,            }
+              workspace: this.mainSession.workspace,
+              reasoningEffort: this.config?.ai?.main?.reasoningEffort || null,
+            }
           : {}),
       }, timeoutMs || this.timeoutMs)
       const usage = payload.usage || null
