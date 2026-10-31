@@ -12,8 +12,9 @@
  * @module stellaris-agent/save
  */
 import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { parse } from '../../engine/lib/save/clausewitz.js'
 
@@ -49,8 +50,7 @@ export function resolveSaveDir({ config, userDir }) {
 }
 
 /** 最近 N 个存档（4.x 每个帝国一个子目录，递归两层）。 */
-export function listSaves(dir, limit = 10) {
-  if (!dir || !existsSync(dir)) return []
+export function listSaves(dir, limit = 10) {  if (!dir || !existsSync(dir)) return []
   const rows = []
   const scan = (folder, depth) => {
     let entries = []
@@ -82,6 +82,30 @@ export function listSaves(dir, limit = 10) {
 
 export function latestSave(dir) {
   return listSaves(dir, 1)[0] || null
+}
+
+/**
+ * 存档身份：同一个帝国目录（4.x 的 `save games/<folder>/`）下的所有 autosave/manual
+ * 视为**同一个存档**，对应同一个主会话。
+ * @param {{latest?:object, meta?:object, dir?:string}|null} state
+ */
+export function saveIdentity(state) {
+  const latest = state?.latest || null
+  const file = latest?.file || state?.file || null
+  const meta = state?.meta || latest?.meta || {}
+  const folder = file ? basename(dirname(file)) : ''
+  const seed = [folder, meta?.name || '', meta?.version || '', state?.dir || ''].join('|')
+  const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
+  return {
+    key,
+    sessionId: `stellaris-main-${key}`,
+    folder: folder || null,
+    name: meta?.name || (file ? basename(file) : null),
+    date: meta?.date || latest?.date || null,
+    version: meta?.version || null,
+    file,
+    ironman: Boolean(meta?.ironman === true || meta?.ironman === 'yes' || meta?.ironman === 1 || latest?.ironman),
+  }
 }
 
 /**

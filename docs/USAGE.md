@@ -384,7 +384,7 @@ latest.json / latest.md                     最近一次
 
 - 插件版本 **v2.1**，固定监听 `127.0.0.1:49939`（可用 `STELLARIS_BRIDGE_PORT` 覆盖）；
 - 同时保留 DSH Web 路由做兼容，旧配置也能用；
-- **主会话专用 session**：程序第一次跑主会话时，插件会在 DSH 里新建 `stellaris-main-<uuid>` 会话，之后主会话都挂在这条会话下；子会话仍是独立激活。健康接口会返回 `mainSessionId` / `mainSessionReady`；
+- **主会话跟着存档走**：每个 `save games/<帝国目录>` 对应一个 `stellaris-main-<saveKey>` DSH 会话；同目录 autosave/manual 算同一个存档。切存档会自动换主会话，本地对话存在 `~/.stellaris-agent/main-sessions/<saveKey>.json`，子会话仍是独立激活。健康接口返回 `mainSessionId` / `mainSessionReady`；
 - 程序启动时会自动安装/更新插件并尝试热重载；
 - **只有插件壳 `index.js` 变了才需要重启 DSH**，改 `lib/handler.mjs` 用 `.\run.cmd plugin reload` 热更新即可；
 - 端口被别的程序占用时：插件记录错误并退回 DSH 路由，不会让 DSH 起不来。

@@ -134,9 +134,11 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/execute `
 | POST | `/api/orchestrator/restart` | 重启（设置变更后用） |
 | POST | `/api/orchestrator/objective` | `{objective}` 更新战略目标 |
 
-> DSH 后端：主会话请求（`label=main`）会在 DSH 里新建并复用一条
-> `stellaris-main-<uuid>` 会话；`/api/stellaris-orchestrator/health` 会返回
-> `mainSessionId` / `mainSessionReady`，子会话仍是独立激活。
+> DSH 后端：主会话跟着存档走。每个 `save games/<帝国目录>` 对应一个
+> `stellaris-main-<saveKey>` DSH 会话，本地 transcript 存在
+> `~/.stellaris-agent/main-sessions/<saveKey>.json`；切存档时自动换主会话。
+> `/api/stellaris-orchestrator/health` 返回 `mainSessionId` / `mainSessionReady`，
+> 子会话仍是独立激活。
 
 ---
 

@@ -315,6 +315,17 @@ HTTP：`GET /api/sessions` 与 `GET /api/sessions/<id>`（见 [API.md](API.md)�
 HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown`；
 界面「子会话」页右上角「失败报告」直接打开目录；CLI `failures` / `failure <id>`。
 
+### 每存档一个主会话
+
+- `save.mjs` 的 `saveIdentity()` 用 `save games/<帝国目录>`（同目录 autosave/manual 视为同一存档）生成稳定 `saveKey`，并派生 `stellaris-main-<saveKey>`；
+- `MainSessionStore` 把每个存档的主会话 transcript 存在 `<home>/main-sessions/<saveKey>.json`；
+- 编排器启动时 `switchMainSave(world.save)`；`startSaveWatch()` 每 30 秒重新读存档目录，发现 `saveKey` 变化就：
+  1. 持久化旧主会话；
+  2. 清空旧单位/事件会话；
+  3. 载入新存档的 transcript，重建 `MainSession`；
+  4. 把新 `sessionId` 通过 `DshBackend.setMainSession()` 带给插件；
+- DSH 插件按 `sessionId` 先 `agents.resume()`，没有就 `agents.create()`；同一个存档的 autosave 不会换主会话。
+
 ### 人格与 voice
 
 - `agent/lib/persona.mjs`：10 个 0-100 属性、7 个预设、`normalizePersona`、`personaPrompt`，
@@ -349,7 +360,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 110 项 node:test
+npm test                      # 118 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

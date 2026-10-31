@@ -27,7 +27,8 @@ import { MainSession } from './ai/main.mjs'
 import { EventSession, UnitSession } from './ai/worker.mjs'
 import { resolveUserDir } from '../../engine/lib/paths.js'
 import { resolveInstallDir } from '../../engine/lib/steam.js'
-import { resolveSaveDir } from './save.mjs'
+import { readSaveState, resolveSaveDir, saveIdentity } from './save.mjs'
+import { MainSessionStore } from './main-sessions.mjs'
 import { agentHome } from './config.mjs'
 import { FailureStore } from './failures.mjs'
 
@@ -87,6 +88,10 @@ export class Orchestrator {
     this.units = new Map()
     this.eventSessions = new Map()
     this.recentEvents = []
+    this.mainStore = new MainSessionStore({ home: this.home, log: this.log })
+    this.mainSave = null
+    this.saveTimer = null
+    this.switchingSave = false
     this.eventQueue = []
     this.eventRunning = false
     this.unitIntervals = new Map()
@@ -184,26 +189,14 @@ export class Orchestrator {
       throw error
     }
 
+    await this.switchMainSave(world.save, { reason: 'start', force: true })
     this.rebuildUnits(world)
-    this.main = new MainSession({
-      backend: this.backendInfo.ok ? this.backend : null,
-      config: this.config,
-      executor: this.executor,
-      chat: this.chat,
-      getWorld: () => this.world?.current || null,
-      getUnits: () => this.unitList(),
-      getCompletions: () => this.world?.recentCompletions(20) || [],
-      dispatch: (unitId, goal) => this.dispatch(unitId, goal),
-      setInterval: (unitId, seconds) => this.unitIntervals.set(unitId, Number(seconds) || 0),
-      log: this.log,
-      journal: this.journal,
-      home: this.home,
-    })
     this.main.setObjective(this.objective)
     this.running = true
     this.startedAt = Date.now()
 
     this.world.start()
+    this.startSaveWatch()
     this.startMainLoop()
     this.journal?.append({ kind: 'orchestrator.start', text: `开始调度：${this.objective || '(无目标)'}`, meta: { paths: this.paths, mods: mods.enabled } })
     this.chat.outbound({
@@ -228,6 +221,111 @@ export class Orchestrator {
     return this.status()
   }
 
+  // ---------------------------------------------------------------- 主会话 / 存档
+  /**
+   * 切换到某个存档对应的主会话：
+   *  - 存档身份见 save.mjs `saveIdentity()`（同一帝国目录的 autosave/manual 算同一个）；
+   *  - 每个存档有自己的本地 transcript + 自己的 DSH session id；
+   *  - 切换时清掉旧的单位会话，避免跨存档复用。
+   */
+  async switchMainSave(saveState, { reason = 'save', force = false } = {}) {
+    const info = saveIdentity(saveState)
+    if (!force && this.main && this.mainSave?.key === info.key) return this.main
+    if (this.switchingSave) return this.main
+    this.switchingSave = true
+    try {
+      this.persistMain()
+      this.units.clear()
+      this.eventSessions.clear()
+      this.recentEvents = []
+      const transcript = this.mainStore.load(info.key)
+      const main = new MainSession({
+        backend: this.backendInfo?.ok ? this.backend : null,
+        config: this.config,
+        executor: this.executor,
+        chat: this.chat,
+        getWorld: () => this.world?.current || null,
+        getUnits: () => this.unitList(),
+        getCompletions: () => this.world?.recentCompletions(20) || [],
+        dispatch: (unitId, goal) => this.dispatch(unitId, goal),
+        setInterval: (unitId, seconds) => this.unitIntervals.set(unitId, Number(seconds) || 0),
+        log: this.log,
+        journal: this.journal,
+        home: this.home,
+        saveInfo: info,
+        dshSessionId: info.sessionId,
+        transcript,
+        onStateChange: () => this.persistMain(),
+      })
+      main.setObjective(this.objective)
+      this.main = main
+      this.mainSave = info
+      this.backend?.setMainSession?.({
+        sessionId: info.sessionId,
+        saveKey: info.key,
+        saveFolder: info.folder,
+        saveName: info.name,
+      })
+      this.journal?.append({
+        kind: 'main.save.attach',
+        text: `主会话挂载存档：${info.name || info.folder || info.key}`,
+        meta: { saveKey: info.key, sessionId: info.sessionId, reason, folder: info.folder },
+      })
+      this.log('orchestrator.main.save', { saveKey: info.key, sessionId: info.sessionId, reason, folder: info.folder, transcript: transcript?.messages?.length || 0 })
+      if (reason !== 'start') {
+        this.chat?.outbound({
+          text: `主会话已切换到存档：${info.name || info.folder || info.key}`,
+          id: 'system',
+          kind: 'save',
+          meta: { saveKey: info.key, sessionId: info.sessionId },
+        })
+        this.scheduleMain('save-switch', 800)
+      }
+      return main
+    } finally {
+      this.switchingSave = false
+    }
+  }
+
+  persistMain() {
+    if (!this.main || !this.mainSave?.key) return null
+    return this.mainStore.save(this.mainSave.key, this.main.exportState())
+  }
+
+  startSaveWatch() {
+    if (this.saveTimer) return
+    const seconds = Math.max(15, Number(this.config?.bridge?.watchSeconds ?? 15) * 2)
+    this.saveTimer = setInterval(async () => {
+      if (!this.running || this.switchingSave) return
+      try {
+        const state = await readSaveState({
+          config: this.config,
+          userDir: this.paths?.userDir || '',
+          cacheDir: this.home,
+          log: this.log,
+        })
+        const info = saveIdentity(state)
+        if (info.key === this.mainSave?.key) return
+        this.log('orchestrator.save.changed', { from: this.mainSave?.key || null, to: info.key, folder: info.folder })
+        const world = await this.world?.refresh({ deep: true, includeSave: true })
+        await this.switchMainSave(world?.save || state, { reason: 'save-watch' })
+        if (world) {
+          this.rebuildUnits(world)
+          this.main?.setObjective(this.objective)
+        }
+      } catch (error) {
+        this.log('orchestrator.save.watch.failed', { error: String(error?.message || error) })
+      }
+    }, seconds * 1000)
+    this.saveTimer.unref?.()
+    this.log('orchestrator.save.watch', { seconds })
+  }
+
+  stopSaveWatch() {
+    if (this.saveTimer) clearInterval(this.saveTimer)
+    this.saveTimer = null
+  }
+
   async stop({ resume = true } = {}) {
     if (!this.running) return { ok: true, already: true }
     this.running = false
@@ -235,6 +333,8 @@ export class Orchestrator {
     if (this.mainInterval) clearInterval(this.mainInterval)
     this.mainTimer = null
     this.mainInterval = null
+    this.stopSaveWatch()
+    this.persistMain()
     this.world?.stop()
     if (resume && this.executor?.pausedByUs) {
       try {
@@ -558,10 +658,17 @@ export class Orchestrator {
     return recent ? { ...recent.snapshot, active: false, endedAt: recent.at } : null
   }
 
-  async refreshWorld({ deep = true } = {}) {
+  async refreshWorld({ deep = true, includeSave = deep } = {}) {
     if (!this.world) return null
-    const world = await this.world.refresh({ deep })
-    if (world) this.rebuildUnits(world)
+    const world = await this.world.refresh({ deep, includeSave })
+    if (world) {
+      const info = saveIdentity(world.save)
+      if (this.mainSave?.key && info.key !== this.mainSave.key) {
+        await this.switchMainSave(world.save, { reason: 'refresh' })
+      }
+      this.rebuildUnits(world)
+      this.main?.setObjective(this.objective)
+    }
     return world
   }
 
@@ -613,6 +720,8 @@ export class Orchestrator {
       world: this.world?.status() || null,
       executor: this.executor?.status() || null,
       main: this.main?.status() || null,
+      mainSave: this.mainSave,
+      mainSessionId: this.mainSave?.sessionId || null,
       chat: this.chat?.status() || null,
       units: [...this.units.values()].map((session) => session.status()),
       events: {

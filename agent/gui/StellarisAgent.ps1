@@ -583,6 +583,8 @@ function Format-Session($s) {
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.AppendLine("会话：$(Val $s.label)（$(Val $s.id)）  kind=$(Val $s.kind)")
   [void]$sb.AppendLine("状态：$(Val $s.status)   运行：$(Val $s.running 'false')   轮次：$(Val $s.turns 0)   消息：$(Val $s.messageCount 0)")
+  if ($s.save) { [void]$sb.AppendLine("存档：$(Val $s.save.name $(Val $s.save.folder '-'))   目录：$(Val $s.save.folder '-')") }
+  if ($s.dshSessionId) { [void]$sb.AppendLine("DSH 主会话：$($s.dshSessionId)") }
   [void]$sb.AppendLine("目标：$(Val $s.objective $(Val $s.goal '-'))")
   if ($s.lastReport) {
     [void]$sb.AppendLine("上次报告：$(Val $s.lastReport.status)  $(Val $s.lastReport.say '')")

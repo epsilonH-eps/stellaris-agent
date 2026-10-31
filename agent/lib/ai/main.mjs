@@ -36,12 +36,32 @@ export class MainSession {
    * @param {Function} [options.log]
    * @param {object} [options.journal]
    */
-  constructor({ backend, config, executor, chat, getWorld, getUnits, getCompletions, dispatch, setInterval = () => {}, log = () => {}, journal = null, home = null }) {
+  constructor({
+    backend,
+    config,
+    executor,
+    chat,
+    getWorld,
+    getUnits,
+    getCompletions,
+    dispatch,
+    setInterval = () => {},
+    log = () => {},
+    journal = null,
+    home = null,
+    saveInfo = null,
+    dshSessionId = null,
+    transcript = null,
+    onStateChange = () => {},
+  }) {
     this.backend = backend
     this.config = config
     this.executor = executor
     this.chat = chat
     this.home = home || agentHome()
+    this.saveInfo = saveInfo || null
+    this.dshSessionId = dshSessionId || saveInfo?.sessionId || null
+    this.onStateChange = onStateChange
     this.persona = normalizePersona(config?.persona)
     this.voices = new VoiceLog({ home: this.home, log })
     this.lastVoice = null
@@ -67,7 +87,41 @@ export class MainSession {
     this.lastError = null
     this.ticking = false
     this.turns = 0
+    if (Array.isArray(transcript?.messages) && transcript.messages.length) {
+      this.session.messages = transcript.messages
+        .filter((row) => row && (row.role === 'user' || row.role === 'assistant') && row.content)
+        .slice(-Math.max(6, Number(config?.ai?.main?.historyMessages ?? 24)))
+        .map((row) => ({ role: row.role, content: String(row.content), ts: Number(row.ts) || Date.now() }))
+      this.session.turns = Number(transcript.turns) || this.session.messages.filter((row) => row.role === 'user').length
+      this.session.lastAt = Number(transcript.updatedAt) || Date.now()
+      this.turns = this.session.turns
+      this.log('main.transcript.loaded', { saveKey: this.saveInfo?.key || null, messages: this.session.messages.length })
+    }
     this.setObjective(config?.objective || '')
+  }
+
+  /** 导出给「每存档一个主会话」的持久化用。 */
+  exportState() {
+    return {
+      save: this.saveInfo,
+      saveKey: this.saveInfo?.key || 'unknown',
+      dshSessionId: this.dshSessionId,
+      objective: this.objective,
+      turns: this.session.turns,
+      messages: this.session.messages.slice(-80).map((row) => ({ role: row.role, content: row.content, ts: row.ts })),
+      lastDecision: this.lastDecision
+        ? { say: this.lastDecision.say, spawned: this.lastDecision.spawn?.map((row) => row.unit) || [], at: this.lastDecision.at }
+        : null,
+      updatedAt: Date.now(),
+    }
+  }
+
+  _changed() {
+    try {
+      this.onStateChange(this)
+    } catch (error) {
+      this.log('main.state.persist.failed', { error: String(error?.message || error) })
+    }
   }
 
   setObjective(objective) {
@@ -156,6 +210,8 @@ export class MainSession {
       lastError: this.lastError,
       say: this.lastDecision?.say || '',
       pendingReports: this.reports.length,
+      save: this.saveInfo,
+      dshSessionId: this.dshSessionId,
     }
   }
 
@@ -255,6 +311,7 @@ export class MainSession {
         meta: { reason, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, voice: voice?.id || null, ms: Date.now() - startedAt },
       })
       this.log('main.tick', { reason, spawned: applied.spawned.length, say: Boolean(decision.say), voice: Boolean(voice), ms: Date.now() - startedAt })
+      this._changed()
       return { ok: true, reason, say: decision.say, voice, spawned: applied.spawned, paused: applied.paused, resumed: applied.resumed }
     } catch (error) {
       this.lastError = String(error?.message || error)
@@ -319,6 +376,7 @@ export class MainSession {
         meta: { id, spawned: applied.spawned, pause: decision.pause, resume: decision.resume, voice: voice?.id || null, ms: Date.now() - startedAt },
       })
       this.log('main.ask', { id, say: Boolean(decision.say), spawned: applied.spawned.length, voice: Boolean(voice), ms: Date.now() - startedAt })
+      this._changed()
       return {
         ok: true,
         id,

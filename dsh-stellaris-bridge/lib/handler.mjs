@@ -92,10 +92,25 @@ export async function createHandler(ctx) {
    * 主会话专用：在 DSH 里新建一个真正的 session，并复用同一个 Agent。
    * 这样主会话在 DSH 里是一条独立会话，而不是每次 run 都临时 spawn 一个一次性激活。
    */
-  const ensureMainSession = async () => {
-    if (mainAgent) return { agent: mainAgent, sessionId: mainSessionId }
+  const ensureMainSession = async ({ sessionId = null } = {}) => {
+    if (mainAgent && (!sessionId || mainSessionId === sessionId)) {
+      return { agent: mainAgent, sessionId: mainSessionId }
+    }
+    const desired = sessionId || `stellaris-main-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
+    if (mainAgent && mainSessionId === desired) return { agent: mainAgent, sessionId: mainSessionId }
+    if (mainAgent && mainSessionId !== desired) {
+      try {
+        await mainHandle?.dispose?.()
+      } catch {
+        /* 切存档 */
+      }
+      mainHandle = null
+      mainAgent = null
+      mainSessionId = null
+      mainCreatedAt = 0
+    }
     if (typeof ctx.agents?.create !== 'function') throw new Error('DSH 没有 agents.create，无法新建主会话 session')
-    mainSessionId = `stellaris-main-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
+    mainSessionId = desired
     let agentOptions = null
     try {
       const selection = defaultModelService()?.currentSelection?.()
@@ -119,29 +134,32 @@ export async function createHandler(ctx) {
       }
     }
     mainRoute = agentOptions
-    mainHandle = await ctx.agents.create({
-      sessionId: mainSessionId,
-      meta: { cwd: conversationCwd(), title: '群星参谋 · 主会话' },
-      ...(agentOptions ? { agentOptions } : {}),
-    })
+    // 同一个存档已有 DSH session 时 resume；没有就按 saveKey 派生的 id 新建
+    if (typeof ctx.agents?.resume === 'function') {
+      try {
+        mainHandle = await ctx.agents.resume({
+          resumeSessionId: mainSessionId,
+          ...(agentOptions ? { agentOptions } : {}),
+        })
+      } catch {
+        mainHandle = null
+      }
+    }
+    if (!mainHandle) {
+      mainHandle = await ctx.agents.create({
+        sessionId: mainSessionId,
+        meta: { cwd: conversationCwd(), title: '群星参谋 · 主会话' },
+        ...(agentOptions ? { agentOptions } : {}),
+      })
+    }
     mainAgent = mainHandle?.agent || mainHandle
     if (!mainAgent || typeof mainAgent.followup !== 'function') throw new Error('agents.create 没有返回可用的 Agent')
     mainCreatedAt = Date.now()
-    try {
-      const session = mainAgent.session
-      session?.append?.('plugin:stellaris/main-session', {
-        sessionId: mainSessionId,
-        label: '群星参谋主会话',
-        createdAt: mainCreatedAt,
-      })
-    } catch {
-      /* 只是标记，失败不影响 */
-    }
     return { agent: mainAgent, sessionId: mainSessionId }
   }
 
-  const runMainSession = async (prompt, { timeoutMs = 600000 } = {}) => {
-    const { agent } = await ensureMainSession()
+  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null } = {}) => {
+    const { agent } = await ensureMainSession({ sessionId })
     if (typeof ctx.subagents?.startActivation !== 'function') throw new Error('这台 DSH 没有 subagents 服务')
     const startedAt = Date.now()
     const controller = new AbortController()
@@ -185,11 +203,15 @@ export async function createHandler(ctx) {
    * @param {string} prompt
    * @param {{label?:string, timeoutMs?:number, team?:boolean}} [options]
    */
-  const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false } = {}) => {
-    // 主会话：在 DSH 里新建并复用一个真正的 session（它自己就是一个 Agent）
-    if (label === 'main' || /主会话/.test(String(label))) {
+  const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false, sessionId = null, saveKey = null } = {}) => {
+    const rawLabel = String(label || '')
+    // 兼容旧 shim：主会话 id 也可以编码在 label 里（main:<sessionId>），这样
+    // 即使插件壳还没重启、不会转发 sessionId 字段，也能按存档复用 session。
+    const labeledSession = /^main[:|]([A-Za-z0-9._-]+)$/.exec(rawLabel)?.[1] || null
+    const isMain = rawLabel === 'main' || Boolean(labeledSession) || /主会话/.test(rawLabel)
+    if (isMain) {
       try {
-        return await runMainSession(prompt, { timeoutMs })
+        return await runMainSession(prompt, { timeoutMs, sessionId: sessionId || labeledSession })
       } catch (error) {
         lastMainError = String(error?.message || error)
         console.warn(`[stellaris-bridge] 主会话 session 失败，回退到一次性激活：${lastMainError}`)

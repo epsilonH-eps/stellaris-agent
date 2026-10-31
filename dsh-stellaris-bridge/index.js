@@ -164,6 +164,8 @@ async function handle(req, res) {
         label: body.label || (team ? '群星-DSH团队' : '群星参谋'),
         timeoutMs: body.timeoutMs,
         team,
+        sessionId: body.sessionId || null,
+        saveKey: body.saveKey || null,
       })
       return sendJson(res, 200, { ok: true, service: name, port: httpPort || desiredPort(), ...result })
     }

@@ -71,6 +71,10 @@ function fakeCtx() {
     },
     agents: {
       currentInitiator: () => ({ id: 'owner' }),
+      async resume({ resumeSessionId }) {
+        ctx.resumedSessionId = resumeSessionId
+        return ctx.agents.create({ sessionId: resumeSessionId })
+      },
       async create({ sessionId }) {
         ctx.createdSessionId = sessionId
         ctx.createCount = (ctx.createCount || 0) + 1
@@ -176,6 +180,32 @@ test('主会话：label=main 新建一个 DSH session 并复用', async () => {
   const health = await call(ctx.routes.handler, { method: 'GET', url: '/api/stellaris-orchestrator/health' })
   assert.equal(health.body.mainSessionReady, true)
   assert.equal(health.body.mainSessionId, first.body.sessionId)
+})
+
+test('主会话：指定 sessionId 时优先 resume 该存档的 DSH session', async () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+  const result = await call(ctx.routes.handler, {
+    method: 'POST',
+    url: '/api/stellaris-orchestrator/run',
+    body: { prompt: '存档 A', label: 'main', sessionId: 'stellaris-main-abc123' },
+  })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.sessionId, 'stellaris-main-abc123')
+  assert.equal(ctx.resumedSessionId, 'stellaris-main-abc123')
+})
+
+test('主会话：旧 shim 不转发 sessionId 时，用 label=main:<id> 也能按存档复用', async () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+  const result = await call(ctx.routes.handler, {
+    method: 'POST',
+    url: '/api/stellaris-orchestrator/run',
+    body: { prompt: '存档 B', label: 'main:stellaris-main-save-b' },
+  })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.sessionId, 'stellaris-main-save-b')
+  assert.equal(ctx.resumedSessionId, 'stellaris-main-save-b')
 })
 
 test('DSH 路由兼容：health / run / reload 仍然可用', async () => {
