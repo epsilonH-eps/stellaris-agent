@@ -280,6 +280,9 @@ Invoke-RestMethod http://127.0.0.1:8787/api/main
 ]
 ```
 
+左侧下半部分是**已执行动作**：每 3 秒刷新，逐条显示时间、单位、方法、成功/失败/跳过和错误；点一条会把完整 `params/attempts/verify` JSON 填到右侧。
+外部接口：`GET /api/actions/history`，详见 `docs/API.md`。
+
 ### 命令行
 
 ```powershell

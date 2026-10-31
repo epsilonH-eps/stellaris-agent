@@ -111,6 +111,9 @@
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/execute` | `{actions:[...], unit?}` → 走执行器并等待结果 |
+| GET | `/api/actions/history` | 已执行动作；`limit/unit/status/method/since` 过滤 |
+| GET | `/api/actions/history/<jobId>` | 某次 job 的完整动作与尝试记录 |
+| GET | `/api/actions/stream` | SSE：`action.start` / `action.done` / `job.done` |
 | POST | `/api/pause` | 暂停游戏 |
 | POST | `/api/resume` | 恢复游戏 |
 
@@ -122,6 +125,39 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/execute `
 
 返回 `JobResult`（见 `docs/ARCHITECTURE.md` §5）。动作校验失败返回 422 + `errors[]`。
 编排器未启动时返回 409 `ORCHESTRATOR_NOT_RUNNING`。
+
+### 动作执行记录
+
+每个动作都会带 `jobId/unit/index/method/params/status/attempts/error/verify`：
+
+```powershell
+Invoke-RestMethod 'http://127.0.0.1:8787/api/actions/history?limit=200'
+Invoke-RestMethod 'http://127.0.0.1:8787/api/actions/history/job-3-dc79fe'
+```
+
+```json
+{
+  "ok": true,
+  "count": 2,
+  "total": 2,
+  "jobs": 3,
+  "actions": [
+    {
+      "jobId": "job-3-dc79fe",
+      "unit": "fleet:1",
+      "method": "move_fleet",
+      "params": { "fleet_id": 1, "system_id": 561 },
+      "status": "ok",
+      "attempts": [{ "attempt": 1, "ok": true, "ms": 24 }],
+      "createdAt": 1793425926427,
+      "completedAt": 1793425926451
+    }
+  ]
+}
+```
+
+历史同时写入 `~/.stellaris-agent/actions.jsonl`，重启后仍可查询。
+`/api/actions/stream` 是 SSE，可给外部面板/直播工具订阅实时动作。
 
 ---
 

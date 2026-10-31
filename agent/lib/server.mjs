@@ -289,6 +289,93 @@ export function startServer({ app, log = () => {} }) {
       if (method === 'GET' && path === '/api/actions') {
         return json(res, 200, { ok: true, actions: describeActions({ unit: url.searchParams.get('unit') || null }) })
       }
+      if (method === 'GET' && path === '/api/actions/history') {
+        const executor = app.orchestrator?.executor
+        const memory = executor?.history || []
+        const disk = executor?.actionLog?.tail(500) || []
+        const byId = new Map()
+        for (const job of disk) byId.set(job.jobId, job)
+        for (const job of memory) byId.set(job.jobId, job)
+        const history = [...byId.values()]
+        const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') || 200)))
+        const unit = url.searchParams.get('unit') || null
+        const status = url.searchParams.get('status') || null
+        const methodFilter = url.searchParams.get('method') || null
+        const since = Number(url.searchParams.get('since') || 0) || 0
+        const rows = []
+        for (const job of history) {
+          if (since && Number(job.completedAt || job.createdAt || 0) < since) continue
+          for (const action of job.actions || []) {
+            if (unit && String(job.unit) !== String(unit)) continue
+            if (status && String(action.status) !== String(status)) continue
+            if (methodFilter && String(action.method) !== String(methodFilter)) continue
+            rows.push({
+              jobId: job.jobId,
+              unit: job.unit,
+              source: job.source,
+              jobOk: job.ok,
+              summary: job.summary,
+              durationMs: job.durationMs,
+              createdAt: job.createdAt || null,
+              completedAt: job.completedAt || null,
+              index: action.index,
+              method: action.method,
+              params: action.params || {},
+              status: action.status,
+              ok: action.ok,
+              error: action.error || null,
+              attempts: action.attempts || [],
+              verify: action.verify || null,
+              response: action.response || null,
+            })
+          }
+        }
+        return json(res, 200, {
+          ok: true,
+          count: Math.min(rows.length, limit),
+          total: rows.length,
+          actions: rows.slice(-limit),
+          jobs: history.length,
+        })
+      }
+      if (method === 'GET' && path.startsWith('/api/actions/history/')) {
+        const executor = app.orchestrator?.executor
+        const jobId = decodeURIComponent(path.slice('/api/actions/history/'.length))
+        const disk = executor?.actionLog?.tail(500) || []
+        const job = [...disk, ...(executor?.history || [])].reverse().find((row) => row.jobId === jobId)
+        if (!job) return fail(res, 404, 'JOB_NOT_FOUND', jobId)
+        return json(res, 200, { ok: true, job })
+      }
+      if (method === 'GET' && path === '/api/actions/stream') {
+        const executor = app.orchestrator?.executor
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        })
+        const send = (event, payload) => {
+          try {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`)
+          } catch {
+            /* stream closed */
+          }
+        }
+        const onStart = (row) => send('action.start', row)
+        const onDone = (row) => send('action.done', row)
+        const onJob = (row) => send('job.done', row)
+        executor?.on?.('action.start', onStart)
+        executor?.on?.('action.done', onDone)
+        executor?.on?.('job.done', onJob)
+        const ping = setInterval(() => send('ping', { at: Date.now() }), 20000)
+        ping.unref?.()
+        req.on('close', () => {
+          clearInterval(ping)
+          executor?.off?.('action.start', onStart)
+          executor?.off?.('action.done', onDone)
+          executor?.off?.('job.done', onJob)
+        })
+        return
+      }
       if (method === 'GET' && path === '/api/units') {
         const orchestrator = app.orchestrator
         if (!orchestrator) return json(res, 200, { ok: true, units: [] })

@@ -19,6 +19,7 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { closeGameWindow } from './ui.mjs'
+import { ActionLog } from './action-log.mjs'
 import { verifySpecOf } from './actions.mjs'
 
 function deepGet(value, path) {
@@ -74,11 +75,12 @@ export class Executor extends EventEmitter {
    * @param {object} options.config
    * @param {Function} [options.log]
    */
-  constructor({ bridge, config, log = () => {} }) {
+  constructor({ bridge, config, log = () => {}, home = null }) {
     super()
     this.bridge = bridge
     this.config = config
     this.log = log
+    this.actionLog = new ActionLog({ home, maxLines: Math.max(500, Number(config?.executor?.keepJobHistory ?? 60) * 4), log })
     const executor = config?.executor || {}
     this.settings = {
       pauseWhenQueuedActions: Number(executor.pauseWhenQueuedActions ?? 8),
@@ -213,6 +215,7 @@ export class Executor extends EventEmitter {
         this.running = null
         this.history.push(result)
         if (this.history.length > this.settings.keepJobHistory) this.history.shift()
+        this.actionLog?.append(result)
         this.emit('job.done', result)
         job.resolve(result)
       }
@@ -279,6 +282,8 @@ export class Executor extends EventEmitter {
       actions: results,
       summary: this._summarize(results, ok),
       durationMs: Date.now() - startedAt,
+      createdAt: job.createdAt,
+      completedAt: Date.now(),
     }
     this.log('executor.job', {
       jobId: job.jobId,

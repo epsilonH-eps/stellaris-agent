@@ -391,7 +391,16 @@ $tabAct.Controls.Add($actSplit)
 $actList = New-Object System.Windows.Forms.ListBox
 $actList.Dock = 'Fill'
 $actList.Font = New-Object System.Drawing.Font('Consolas', 9)
-$actSplit.Panel1.Controls.Add($actList)
+$actLeftSplit = New-Object System.Windows.Forms.SplitContainer
+$actLeftSplit.Dock = 'Fill'
+$actLeftSplit.Orientation = 'Horizontal'
+$actLeftSplit.SplitterDistance = 260
+$actLeftSplit.Panel1.Controls.Add($actList)
+$actHistory = New-Object System.Windows.Forms.ListBox
+$actHistory.Dock = 'Fill'
+$actHistory.Font = New-Object System.Drawing.Font('Consolas', 8)
+$actLeftSplit.Panel2.Controls.Add($actHistory)
+$actSplit.Panel1.Controls.Add($actLeftSplit)
 $actEditor = New-Object System.Windows.Forms.RichTextBox
 $actEditor.Dock = 'Fill'
 $actEditor.Font = New-Object System.Drawing.Font('Consolas', 10)
@@ -1163,6 +1172,23 @@ $chatInput.Add_KeyDown({
   if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $chatSend.PerformClick(); $e.SuppressKeyPress = $true }
 })
 
+function Update-ActionHistory {
+  try {
+    $r = Invoke-Api -Path '/api/actions/history?limit=200' -TimeoutSec 10
+    $rows = @($r.actions)
+    $actHistory.Items.Clear()
+    foreach ($a in $rows) {
+      $ms = if ($a.completedAt) { [long]$a.completedAt } elseif ($a.createdAt) { [long]$a.createdAt } else { 0 }
+      $time = if ($ms -gt 0) { [DateTimeOffset]::FromUnixTimeMilliseconds($ms).LocalDateTime.ToString('HH:mm:ss') } else { '--:--:--' }
+      $error = if ($a.error) { "  $($a.error)" } else { '' }
+      [void]$actHistory.Items.Add("$time [$($a.unit)] $($a.method) $($a.status)$error")
+    }
+    $actHistory.Tag = $rows
+  } catch {
+    # 历史接口失败不弹窗，避免每 3 秒打断操作
+  }
+}
+
 $actLoad.Add_Click({
   try {
     $r = Invoke-Api -Path '/api/actions' -TimeoutSec 10
@@ -1172,6 +1198,7 @@ $actLoad.Add_Click({
       [void]$actList.Items.Add("$($a.method)($params)")
     }
     $actResult.Text = "共 $($r.actions.Count) 个动作"
+    Update-ActionHistory
   } catch { Show-Error '读取动作失败' $_ }
 })
 $actList.Add_SelectedIndexChanged({
@@ -1179,14 +1206,27 @@ $actList.Add_SelectedIndexChanged({
   $method = ([string]$actList.SelectedItem).Split('(')[0]
   $actEditor.Text = "[{ `"method`": `"$method`", `"params`": {} }]"
 })
+$actHistory.Add_SelectedIndexChanged({
+  $idx = $actHistory.SelectedIndex
+  if ($idx -lt 0) { return }
+  $rows = @($actHistory.Tag)
+  if ($idx -lt $rows.Count -and $rows[$idx]) {
+    $actEditor.Text = ($rows[$idx] | ConvertTo-Json -Depth 10)
+  }
+})
 $actRun.Add_Click({
   try {
     $actions = $actEditor.Text | ConvertFrom-Json
     $r = Invoke-Api -Path '/api/execute' -Method POST -Body @{ actions = @($actions) } -TimeoutSec 120
     $actResult.Text = "结果：$($r.ok) $($r.summary)"
     $actEditor.Text = ($r | ConvertTo-Json -Depth 8)
+    Update-ActionHistory
   } catch { Show-Error '执行失败' $_ }
 })
+$actHistTimer = New-Object System.Windows.Forms.Timer
+$actHistTimer.Interval = 3000
+$actHistTimer.Add_Tick({ Update-ActionHistory })
+$actHistTimer.Start()
 
 $readFull.Add_Click({
   try { $r = Invoke-Api -Path '/api/world?full=1' -TimeoutSec 120; $readBox.Text = ($r.world | ConvertTo-Json -Depth 6) }

@@ -151,7 +151,7 @@ export class Orchestrator {
     this.paths = resolvePaths(this.config)
     this.journal = new AgentJournal({ dir: `${this.home}/journal`, enabled: this.config?.journal?.enabled !== false })
     this.chat = new ChatHub({ config: this.config, log: this.log })
-    this.executor = new Executor({ bridge: this.bridge, config: this.config, log: this.log })
+    this.executor = new Executor({ bridge: this.bridge, config: this.config, log: this.log, home: this.home })
     this.executor.on('job.done', (result) => {
       this.journal?.append({
         kind: 'executor.job',
