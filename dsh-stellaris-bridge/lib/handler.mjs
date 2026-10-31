@@ -674,9 +674,10 @@ export async function createHandler(ctx) {
           state.subagents.set(target, sub)
         }
         const run = sub.queue.then(async () => {
-          const history = sub.memory.slice(-4)
+          // 只带最近 2 轮“指令 + 已执行动作”，不再重复原始回复文本。
+          const history = sub.memory.slice(-2).map((row) => ({ instruction: row.instruction, actions: row.actions }))
           const context = history.length
-            ? `【对象历史】${JSON.stringify(history).slice(0, 12000)}\n`
+            ? `【对象历史】${JSON.stringify(history).slice(0, 6000)}\n`
             : `【对象初始化】${JSON.stringify({ actions: unit.actions || [], context: unit.context || {} }).slice(0, 16000)}\n`
           const result = await runActivation(`${context}${instruction}\n只输出 JSON {"actions":[...]}`, {
             label: target,
@@ -688,7 +689,7 @@ export async function createHandler(ctx) {
           })
           const childDecision = parseJsonReply(result.text) || { actions: [] }
           const childActions = Array.isArray(childDecision.actions) ? childDecision.actions : []
-          sub.memory.push({ at: Date.now(), instruction, text: String(result.text || '').slice(0, 4000), actions: childActions })
+          sub.memory.push({ at: Date.now(), instruction, actions: childActions })
           if (sub.memory.length > 20) sub.memory = sub.memory.slice(-20)
           sub.initialized = true
           try {
