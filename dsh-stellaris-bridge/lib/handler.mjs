@@ -37,10 +37,12 @@ export async function createHandler(ctx) {
   let mainRoute = null
   let mainWorkspace = null
   let workspaceRegistered = false
+  let workspaceProject = null
   let mainTitle = null
   let titleRenamed = false
   let lastWorkerError = null
   const workers = new Map()
+  const attachedWorkspaceSessions = new Set()
 
   const ensureParent = async () => {
     if (parent) return parent
@@ -127,6 +129,22 @@ export async function createHandler(ctx) {
     }
   }
 
+  async function attachMainToWorkspace() {
+    if (!workspaceProject || !mainSessionId) return false
+    if (attachedWorkspaceSessions.has(mainSessionId)) return true
+    try {
+      if (!(workspaceProject.sessionIds || []).includes(mainSessionId)) {
+        await workspaceProject.attachSession(mainSessionId)
+      }
+      attachedWorkspaceSessions.add(mainSessionId)
+      workspaceRegistered = true
+      return true
+    } catch (error) {
+      console.warn(`[stellaris-bridge] 挂载主会话到工作区失败：${String(error?.message || error)}`)
+      return false
+    }
+  }
+
   /**
    * 主会话专用：在 DSH 里新建一个真正的 session，并复用同一个 Agent。
    * 这样主会话在 DSH 里是一条独立会话，而不是每次 run 都临时 spawn 一个一次性激活。
@@ -139,6 +157,7 @@ export async function createHandler(ctx) {
         await renameMainTitle(mainAgent, desiredTitle)
         mainTitle = desiredTitle
       }
+      await attachMainToWorkspace()
       return { agent: mainAgent, sessionId: mainSessionId }
     }
     const desired = sessionId || `stellaris-main-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
@@ -165,6 +184,7 @@ export async function createHandler(ctx) {
     try {
       const registry = typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : null
       const project = await registry?.create?.(desiredWorkspace, '群星参谋')
+      workspaceProject = project || null
       workspaceRegistered = Boolean(project)
     } catch {
       /* workspace 注册失败不影响 session 创建 */
@@ -220,6 +240,7 @@ export async function createHandler(ctx) {
     mainWorkspace = desiredWorkspace
     mainTitle = desiredTitle
     titleRenamed = await renameMainTitle(mainAgent, desiredTitle)
+    await attachMainToWorkspace()
     return { agent: mainAgent, sessionId: mainSessionId }
   }
 
