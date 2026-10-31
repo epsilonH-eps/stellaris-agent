@@ -266,6 +266,7 @@ export async function createHandler(ctx) {
         mainHandle = await ctx.agents.create({
           sessionId: mainSessionId,
           meta: { cwd: desiredWorkspace, title: desiredTitle },
+          agentPreset: 'minimal',
           ...(agentOptions ? { agentOptions } : {}),
         })
         mainAgent = mainHandle?.agent || mainHandle
@@ -327,7 +328,7 @@ export async function createHandler(ctx) {
     return text
   }
 
-  async function runActivation(prompt, { label = '群星参谋', parent = null, timeoutMs = 600000, childId = null, delivery = 'caller', keepActivation = false, reasoningEffort = null } = {}) {
+  async function runActivation(prompt, { label = '群星参谋', parent = null, timeoutMs = 600000, childId = null, delivery = 'caller', keepActivation = false, reasoningEffort = null, agentPreset = null } = {}) {
     if (typeof ctx.subagents?.startActivation !== 'function') throw new Error('这台 DSH 没有 subagents 服务')
     const owner = parent || (await ensureParent())
     const controller = new AbortController()
@@ -341,6 +342,7 @@ export async function createHandler(ctx) {
         request: {
           prompt: [{ type: 'text', text: String(prompt || '') }],
           parent: owner,
+          ...(agentPreset ? { agentPreset } : {}),
           ...(reasoningEffort ? { agentOptions: {
             provider: mainRoute?.provider || 'deepseek-official',
             model: mainRoute?.model || DSH_MODEL,
@@ -348,6 +350,7 @@ export async function createHandler(ctx) {
           } } : {}),
         },
         ...(childId ? { childId } : {}),
+        ...(agentPreset ? { agentPreset } : {}),
         signal: controller.signal,
         delivery,
       })
@@ -560,6 +563,7 @@ export async function createHandler(ctx) {
         timeoutMs: mainTimeoutMs,
         delivery: 'caller',
         reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
+        agentPreset: 'minimal',
       }),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error('BRIDGE_MAIN_TIMEOUT')), mainTimeoutMs)
@@ -591,6 +595,7 @@ export async function createHandler(ctx) {
             timeoutMs: payload.timeoutMs || 600000,
             delivery: 'parent',
             reasoningEffort: sub.initialized ? 'off' : 'low',
+            agentPreset: 'minimal',
           })
           if (!sub.archive && result.childId) {
             const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\${result.childId}`
