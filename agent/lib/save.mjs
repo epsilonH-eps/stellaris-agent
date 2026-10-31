@@ -105,8 +105,8 @@ export function saveIdentity(state) {
   const file = resolveSaveFile(state)
   const meta = state?.meta || (latest && typeof latest === 'object' ? latest.meta : null) || {}
   const folder = file ? basename(dirname(file)) : ''
-  // v2：旧会话曾因合成事件损坏，换一代 key 让新主会话使用干净 session
-  const seed = `${folder || file || 'unknown'}|v2`
+  // v3：v2 会话已被 DSH 的 null-role 通知污染，换一代 key 重建干净主会话
+  const seed = `${folder || file || 'unknown'}|v3`
   const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
   return {
     key,

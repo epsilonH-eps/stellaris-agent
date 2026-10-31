@@ -482,15 +482,9 @@ export async function createHandler(ctx) {
   const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const { agent } = await ensureMainSession({ sessionId, workspace, saveName, reasoningEffort })
     const startedAt = Date.now()
-    // 优先直接在主会话里 followup：这样 DSH 里只有一条主对话，
-    // 不会再为每次 tick 造一个“群星参谋主会话”子智能体。
-    try {
-      const text = await followupInSession(agent, prompt, timeoutMs)
-      return { text, usage: null, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
-    } catch (error) {
-      lastMainError = `followup: ${String(error?.message || error)}`
-      console.warn(`[stellaris-bridge] 主会话 followup 失败，回退 activation：${lastMainError}`)
-    }
+    // 直接用一次性 activation，不把主会话历史塞进 followup。
+    // 主会话历史里可能带 DSH 的 null-role 通知，followup 会触发
+    // "DeepSeek Messages transport failed"。
     const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'caller', reasoningEffort: normalizeReasoningEffort(reasoningEffort || 'high') })
     return { ...result, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
   }
