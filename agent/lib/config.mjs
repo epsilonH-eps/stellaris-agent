@@ -99,6 +99,7 @@ export const DEFAULT_CONFIG = {
   },
   objective: '',
   chat: { enabled: true, port: 8787, token: '', maxHistory: 500 },
+  ui: { followActive: true, followSeconds: 10, autoClose: true, autoCloseSeconds: 5, processName: 'stellaris' },
   dshPlugin: { autoInstall: true, autoReload: false, profileDir: '', restartCommand: '' },
   journal: { enabled: true },
   persona: freshPersona(),

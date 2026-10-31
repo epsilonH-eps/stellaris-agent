@@ -55,6 +55,37 @@ function researchWorld() {
 
 const unit = { id: 'research', type: 'research', name: '国家科研' }
 
+test('硬性指标：两棵未闭门树存在时禁止开新传统树', () => {
+  const unit = { id: 'unit:laws', type: 'laws' }
+  const session = new UnitSession({
+    unit,
+    backend: null,
+    executor: new FakeExecutor([]),
+    getWorld: () => null,
+    config,
+    log: () => {},
+  })
+  const world = {
+    traditions: {
+      adopted_trees: [
+        { key: 'tradition_expansion', is_finished: false },
+        { key: 'tradition_adaptability', is_finished: false },
+      ],
+      nodes: {
+        tradition_aptitude: [{ key: 'tr_aptitude_adopt', tree_key: 'tradition_aptitude' }],
+        tradition_adaptability: [{ key: 'tr_adaptability_recycling', tree_key: 'tradition_adaptability' }],
+      },
+    },
+  }
+  const blocked = session.precheckActions([{ method: 'adopt_tradition', params: { tradition_key: 'tr_aptitude_adopt' } }], world)
+  assert.equal(blocked.allowed.length, 0)
+  assert.match(blocked.errors[0], /未闭门传统树/)
+
+  const allowed = session.precheckActions([{ method: 'adopt_tradition', params: { tradition_key: 'tr_adaptability_recycling' } }], world)
+  assert.equal(allowed.allowed.length, 1)
+  assert.equal(allowed.errors.length, 0)
+})
+
 test('子会话：模型最后 blocked 时，失败报告仍保留上一次执行器结果', async () => {
   const failed = {
     ok: false,

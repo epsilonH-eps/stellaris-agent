@@ -338,6 +338,18 @@ export class UnitSession {
           continue
         }
       }
+      if (action.method === 'adopt_tradition') {
+        const key = action.params?.tradition_key
+        const adopted = world?.traditions?.adopted_trees || []
+        const unfinished = adopted.filter((tree) => !tree.is_finished).length
+        const node = Object.values(world?.traditions?.nodes || {}).flat().find((row) => row.key === key)
+        const tree = node?.tree_key || (String(key || '').endsWith('_adopt') ? `tradition_${String(key).replace(/^tr_/, '').replace(/_adopt$/, '')}` : null)
+        const isNewTree = Boolean(tree) && !adopted.some((row) => row.key === tree)
+        if (unfinished >= 2 && isNewTree) {
+          errors.push(`adopt_tradition(${key}) 被拒绝：已有 ${unfinished} 棵未闭门传统树，硬性指标禁止再开新树`)
+          continue
+        }
+      }
       allowed.push(action)
     }
     return { allowed, errors }

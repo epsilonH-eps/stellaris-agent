@@ -328,6 +328,23 @@ latest.json / latest.md                     最近一次
 
 `maxFiles` 会按时间自动清理旧报告；`includeWorld` 默认关闭以控制体积。
 
+界面/镜头配置：
+
+```json
+{
+  "ui": {
+    "followActive": true,
+    "followSeconds": 10,
+    "autoClose": true,
+    "autoCloseSeconds": 5
+  }
+}
+```
+
+- `followActive`：主镜头跟随最活跃舰队，没有活跃舰队时跟随人口最多的殖民地；
+- `autoClose` / `autoCloseSeconds`：AI 打开游戏窗口后等待 5 秒再发 ESC 关闭；
+- 传统硬指标：已有 ≥2 棵未闭门传统树时，禁止开新树。
+
 ---
 
 ## 9. 命令行速查

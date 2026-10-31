@@ -198,6 +198,11 @@ export function unitContext(unit, world) {
       return {
         date: world.date,
         edicts: world.edicts,
+        traditionPolicy: {
+          unfinishedTrees: asArray(traditions.adopted_trees).filter((tree) => !tree.is_finished).length,
+          unfinishedLimit: 2,
+          rule: '已有 >=2 棵未闭门传统树时，禁止 adopt_tradition 打开新树；只能推进已采纳且未完成的树。',
+        },
         traditions: {
           summary: traditions.summary,
           adopted_trees: traditions.adopted_trees,

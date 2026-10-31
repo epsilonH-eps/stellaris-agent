@@ -336,6 +336,16 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 `fleetSystems=null`、星球会看到 `capacity`/区划为空。`ai.unit.maxConcurrent`（默认 5）
 限制单位/事件子会话并发，避免 DSH 的 `active child limit: 8`。
 
+### 镜头、窗口与传统硬指标
+
+- `agent/lib/ui.mjs` 的 `selectFollowTarget()` 选当前最活跃舰队（战斗 > 调查 > 移动 > 其他订单），
+  没有活跃舰队时选人口最多的殖民地；编排器每 `ui.followSeconds`（默认 10 秒）调一次
+  `focus_fleet` / `focus_planet`；
+- `Executor` 对 `open_alert` / `open_notification` / `show_panel` 任务，完成后再等
+  `ui.autoCloseSeconds`（默认 5 秒），向游戏窗口发 ESC 关闭；
+- `UnitSession.precheckActions()` 对 `adopt_tradition` 做硬性检查：`adopted_trees` 中
+  `is_finished=false` 的数量 ≥2 时，只允许已采纳树的节点，禁止新树的 `*_adopt`。
+
 ### 人格与 voice
 
 - `agent/lib/persona.mjs`：10 个 0-100 属性、7 个预设、`normalizePersona`、`personaPrompt`，
@@ -370,7 +380,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 124 项 node:test
+npm test                      # 126 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

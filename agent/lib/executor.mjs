@@ -18,6 +18,7 @@
  */
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import { closeGameWindow } from './ui.mjs'
 import { verifySpecOf } from './actions.mjs'
 
 function deepGet(value, path) {
@@ -37,6 +38,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, m
 
 // 这些错误是引擎前置条件/参数不存在，重试同一个动作不会变好
 const NO_RETRY_CODES = new Set(['-32062', '-32084', '-32044'])
+
+// 这些动作只影响界面；执行完后给玩家 5 秒看清，再按 ESC 关掉游戏窗口
+const UI_OPEN_ACTIONS = new Set(['open_alert', 'open_notification', 'show_panel'])
 
 function bridgeMethod(method) {
   return method === 'cancel_monthly_trade' ? 'set_monthly_trade' : method
@@ -85,6 +89,8 @@ export class Executor extends EventEmitter {
       retryDelayMs: Number(executor.retryDelayMs ?? 450),
       verify: executor.verify !== false,
       keepJobHistory: Number(executor.keepJobHistory ?? 60),
+      uiAutoClose: config?.ui?.autoClose !== false,
+      uiAutoCloseSeconds: Math.max(0, Number(config?.ui?.autoCloseSeconds ?? 5)),
     }
     this.jobs = []
     this.running = null
@@ -135,7 +141,21 @@ export class Executor extends EventEmitter {
     this.jobs.push(job)
     this.emit('queued', { jobId: id, unit, actions: actions.length, queuedActions: this.queuedActions })
     this._schedule()
-    return promise
+    const hasUiWindow = actions.some((action) => UI_OPEN_ACTIONS.has(action?.method))
+    return promise.finally(() => {
+      if (hasUiWindow) this._scheduleUiClose()
+    })
+  }
+
+  _scheduleUiClose() {
+    if (!this.settings.uiAutoClose) return
+    const seconds = this.settings.uiAutoCloseSeconds
+    const timer = setTimeout(() => {
+      closeGameWindow({ processName: this.config?.ui?.processName || 'stellaris' })
+        .then((result) => this.log('executor.ui.close', result))
+        .catch((error) => this.log('executor.ui.close.failed', { error: String(error?.message || error) }))
+    }, Math.max(0, seconds) * 1000)
+    timer.unref?.()
   }
 
   /** 主会话/用户显式暂停。 */

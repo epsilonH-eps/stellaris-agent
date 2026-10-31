@@ -31,6 +31,7 @@ import { readSaveState, resolveSaveDir, saveIdentity } from './save.mjs'
 import { MainSessionStore } from './main-sessions.mjs'
 import { agentHome } from './config.mjs'
 import { FailureStore } from './failures.mjs'
+import { selectFollowTarget } from './ui.mjs'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -97,6 +98,10 @@ export class Orchestrator {
     this.unitActive = 0
     this.unitWaiters = []
     this.unitPending = new Set()
+    this.cameraTimer = null
+    this.cameraTarget = null
+    this.cameraAt = 0
+    this.cameraErrors = 0
     this.eventQueue = []
     this.eventRunning = false
     this.unitIntervals = new Map()
@@ -204,6 +209,7 @@ export class Orchestrator {
     this.world.start()
     this.startSaveWatch()
     this.startMainLoop()
+    this.startCameraFollow()
     this.journal?.append({ kind: 'orchestrator.start', text: `开始调度：${this.objective || '(无目标)'}`, meta: { paths: this.paths, mods: mods.enabled } })
     this.chat.outbound({
       text: this.backendInfo.ok
@@ -307,6 +313,37 @@ export class Orchestrator {
     return this.mainStore.save(this.mainSave.key, this.main.exportState())
   }
 
+  startCameraFollow() {
+    if (this.config?.ui?.followActive === false) return
+    if (this.cameraTimer) return
+    const seconds = Math.max(3, Number(this.config?.ui?.followSeconds ?? 10))
+    const tick = () => this.followActiveCamera().catch((error) => this.log('camera.follow.failed', { error: String(error?.message || error) }))
+    this.cameraTimer = setInterval(tick, seconds * 1000)
+    this.cameraTimer.unref?.()
+    setTimeout(tick, 2500).unref?.()
+  }
+
+  async followActiveCamera() {
+    if (!this.running || !this.bridge) return
+    const target = selectFollowTarget(this.world?.current)
+    if (!target) return
+    const key = `${target.type}:${target.id}`
+    const method = target.type === 'fleet' ? 'focus_fleet' : 'focus_planet'
+    const params = target.type === 'fleet' ? { fleet_id: target.id } : { planet_id: target.id }
+    try {
+      await this.bridge.request(method, params, { timeoutMs: 5000 })
+      if (key !== this.cameraTarget) {
+        this.log('camera.follow', { target: key, reason: target.reason })
+      }
+      this.cameraTarget = key
+      this.cameraAt = Date.now()
+      this.cameraErrors = 0
+    } catch (error) {
+      this.cameraErrors += 1
+      if (this.cameraErrors <= 3) this.log('camera.follow.error', { target: key, error: String(error?.message || error) })
+    }
+  }
+
   startSaveWatch() {
     if (this.saveTimer) return
     const seconds = Math.max(15, Number(this.config?.bridge?.watchSeconds ?? 15) * 2)
@@ -348,6 +385,8 @@ export class Orchestrator {
     if (this.mainInterval) clearInterval(this.mainInterval)
     this.mainTimer = null
     this.mainInterval = null
+    if (this.cameraTimer) clearInterval(this.cameraTimer)
+    this.cameraTimer = null
     this.stopSaveWatch()
     this.persistMain()
     this.world?.stop()

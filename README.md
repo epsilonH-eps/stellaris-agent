@@ -40,7 +40,10 @@
 - **「人格」页**：10 条滑动条调 AI 属性（侵略性/大胆/谨慎/荣誉/外交/扩张/经济/科研/军事/共情），可套预设、导入 Character Card V2 / JSON / Markdown 人格组件；
 - **主会话「人话」**：每轮输出 `voice`（用意/看法/情绪），写 `~/.stellaris-agent/voice`，`GET /api/voice` 可给 TTS/直播直接消费；
 - **失败可见**：子会话最终失败会自动导出 JSON + Markdown（原因/建议/逐次尝试/会话现场）到 `~/.stellaris-agent/failures`，界面、HTTP 接口、CLI 都能查；
-- **自动连接**：程序启动后由看护循环负责——游戏在跑就注入原生桥，进局就自动接管；游戏重启后自动续上。
+- **自动连接**：程序启动后由看护循环负责——游戏在跑就注入原生桥，进局就自动接管；游戏重启后自动续上；
+- **镜头跟随**：每 10 秒自动把主镜头切到“最活跃”的舰队（战斗/移动/调查优先），没有活跃舰队时跟随人口最多的殖民地；开关 `ui.followActive`；
+- **窗口自动关闭**：AI 执行 `open_alert` / `open_notification` / `show_panel` 后，等 5 秒再发 ESC 关闭游戏窗口；时长 `ui.autoCloseSeconds`；
+- **传统硬指标**：已有 ≥2 棵未闭门传统树时，禁止开新树，只能推进已采纳的未完成树。
 
 ### 启动时读什么（全量）
 
@@ -241,7 +244,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（124 项）
+test/                       node:test（126 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```
