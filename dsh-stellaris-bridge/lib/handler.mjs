@@ -36,6 +36,7 @@ export async function createHandler(ctx) {
   let mainWorkspace = null
   let workspaceRegistered = false
   let mainTitle = null
+  let titleRenamed = false
 
   const ensureParent = async () => {
     if (parent) return parent
@@ -87,6 +88,7 @@ export async function createHandler(ctx) {
     mainWorkspace,
     workspaceRegistered,
     mainTitle,
+    titleRenamed,
     hasDefaultModel: Boolean(defaultModelService()),
     lastMainError,
   })
@@ -187,6 +189,16 @@ export async function createHandler(ctx) {
     mainCreatedAt = Date.now()
     mainWorkspace = desiredWorkspace
     mainTitle = desiredTitle
+    // DSH 的 meta.title 不是会话标题；标题要通过 sessionTitle.rename() 写 session/title
+    try {
+      const titleService = typeof ctx.get === 'function' ? ctx.get('sessionTitle') : null
+      const session = mainAgent.session || mainHandle?.session
+      if (titleService?.rename && session) await titleService.rename(session, desiredTitle)
+      titleRenamed = Boolean(titleService?.rename && session)
+    } catch (error) {
+      titleRenamed = false
+      console.warn(`[stellaris-bridge] 设置会话标题失败：${String(error?.message || error)}`)
+    }
     return { agent: mainAgent, sessionId: mainSessionId }
   }
 

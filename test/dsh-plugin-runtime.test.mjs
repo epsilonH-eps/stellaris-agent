@@ -106,6 +106,15 @@ function fakeCtx() {
           },
         }
       }
+      if (name === 'sessionTitle') {
+        return {
+          async rename(session, title) {
+            ctx.titleSession = session
+            ctx.title = title
+            return { title }
+          },
+        }
+      }
       return null
     },
     effect(fn) {
@@ -241,9 +250,11 @@ test('主会话：label 里带工作区，session 建在独立 workspace', async
   assert.equal(ctx.workspaceDir, workspace)
   assert.equal(ctx.createdMeta.cwd, workspace)
   assert.equal(ctx.createdMeta.title, name)
+  assert.equal(ctx.title, name)
   const health = await call(ctx.routes.handler, { method: 'GET', url: '/api/stellaris-orchestrator/health' })
   assert.equal(health.body.mainWorkspace, workspace)
   assert.equal(health.body.mainTitle, name)
+  assert.equal(health.body.titleRenamed, true)
   assert.equal(health.body.workspaceRegistered, true)
 })
 

@@ -54,6 +54,8 @@ test('编排器：切换存档时换主会话，并保留各自的 transcript', 
   const home = mkdtempSync(join(tmpdir(), 'stellaris-main-switch-'))
   try {
     const orch = new Orchestrator({ config: { ai: { main: { historyMessages: 24 } } }, home, log: () => {} })
+    const backendCalls = []
+    orch.backend = { setMainSession: (value) => backendCalls.push(value) }
     const a = saveState('A', 'Empire A')
     const b = saveState('B', 'Empire B')
     const keyA = saveIdentity(a).key
@@ -61,11 +63,14 @@ test('编排器：切换存档时换主会话，并保留各自的 transcript', 
     await orch.switchMainSave(a, { reason: 'start' })
     assert.equal(orch.mainSave.key, keyA)
     assert.equal(orch.main.dshSessionId, `stellaris-main-${keyA}`)
+    assert.equal(backendCalls.at(-1).sessionId, `stellaris-main-${keyA}`)
+    assert.equal(backendCalls.at(-1).saveName, 'Empire A')
     orch.main.session.pushUser('A 存档的问题')
     orch.persistMain()
 
     await orch.switchMainSave(b, { reason: 'start' })
     assert.equal(orch.mainSave.key, keyB)
+    assert.equal(backendCalls.at(-1).sessionId, `stellaris-main-${keyB}`)
     assert.equal(orch.main.session.messages.length, 0)
     orch.main.session.pushUser('B 存档的问题')
     orch.persistMain()
