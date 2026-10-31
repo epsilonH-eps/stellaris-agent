@@ -481,6 +481,13 @@ export async function createHandler(ctx) {
   async function sendToWorker(worker, prompt, timeoutMs = 600000) {
     const controller = typeof ctx.get === 'function' ? ctx.get('sessionController') : null
     let child = typeof ctx.agents?.get === 'function' ? ctx.agents.get(worker.sessionId) : null
+    if (!child && typeof ctx.agents?.list === 'function') {
+      try {
+        child = (ctx.agents.list() || []).find((agent) => agent?.session?.header?.id === worker.sessionId) || null
+      } catch {
+        child = null
+      }
+    }
     if (!child) {
       try {
         child = typeof ctx.agents?.resume === 'function'
