@@ -329,6 +329,14 @@ export class DshBackend {
   /**
    * @param {{system:string, messages:Array<{role:string,content:string}>, label?:string, maxTokens?:number, timeoutMs?:number, team?:boolean}} request
    */
+  async bridgeTurn(payload = {}) {
+    return this._post('/run', {
+      prompt: JSON.stringify(payload),
+      label: 'bridge',
+      timeoutMs: Number(payload.timeoutMs || this.timeoutMs),
+    }, Number(payload.timeoutMs || this.timeoutMs))
+  }
+
   async complete({ system, messages, label = '群星参谋', timeoutMs = null, team = false } = {}) {
     const prompt = flattenPrompt(system, messages)
     try {

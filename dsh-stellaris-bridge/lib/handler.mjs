@@ -9,7 +9,7 @@
  * @module dsh-stellaris-bridge/handler
  */
 import { randomUUID, createHash } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 
 export const version = '2.0.0'
 
@@ -479,6 +479,115 @@ export async function createHandler(ctx) {
     return text
   }
 
+  const bridgeStates = new Map()
+
+  function bridgeState(saveKey) {
+    const key = String(saveKey || 'default')
+    if (!bridgeStates.has(key)) bridgeStates.set(key, { initialized: false, memory: [], subagents: new Map() })
+    return bridgeStates.get(key)
+  }
+
+  function parseJsonReply(text) {
+    const raw = String(text || '')
+    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw)
+    const candidate = fenced ? fenced[1] : raw
+    const start = candidate.indexOf('{')
+    const end = candidate.lastIndexOf('}')
+    if (start < 0 || end <= start) return null
+    try { return JSON.parse(candidate.slice(start, end + 1)) } catch { return null }
+  }
+
+  async function runBridgeTurn(payload = {}) {
+    const ws = payload.workspace || conversationCwd()
+    const saveName = payload.polityName || payload.saveName || '群星参谋'
+    const sessionId = payload.sessionId || `stellaris-main-${payload.saveKey || 'default'}`
+    const { agent } = await ensureMainSession({
+      sessionId,
+      workspace: ws,
+      saveName,
+      reasoningEffort: payload.reasoningEffort || 'high',
+    })
+    const state = bridgeState(payload.saveKey || saveName)
+    const units = Array.isArray(payload.units) ? payload.units : []
+    const human = Array.isArray(payload.human) ? payload.human : []
+    const lines = []
+    if (!state.initialized) {
+      lines.push('【初始化】你是正在直播《群星》的 AI 主控。先用 audience 字段向观众说明“现在由 AI 接管”，再开始第一轮判断。')
+      if (payload.persona) lines.push(`【人格】\n${String(payload.persona).slice(0, 6000)}`)
+      state.initialized = true
+    }
+    lines.push(`【本轮原因】${payload.reason || 'turn'}`)
+    lines.push(`【可用对象】${JSON.stringify(units.map((u) => ({ id: u.id, type: u.type, name: u.name, goal: u.goal || null }))).slice(0, 12000)}`)
+    lines.push(`【新的世界信息】${JSON.stringify(payload.world).slice(0, 30000)}`)
+    if (state.memory.length) lines.push(`【上一轮记忆】${JSON.stringify(state.memory.slice(-6)).slice(0, 8000)}`)
+    if (human.length) lines.push(`【人类输入】${JSON.stringify(human).slice(0, 8000)}`)
+    lines.push(`【输出要求】只输出一个 JSON：
+{
+  "say": "给玩家的简短话",
+  "voice": "直播口吻的一句话",
+  "audience": "给观众的接管/现状说明",
+  "dialogue": [{"id":"人类输入id","text":"分别回复"}],
+  "dispatches": [{"target":"fleet:1","instruction":"用人话下命令"}],
+  "actions": [{"method":"...","params":{}}]
+}
+已有目标必须复用；不要重复初始化；不要输出旧提示词。`)
+    const result = await runActivation(lines.join('\n\n'), {
+      label: '群星参谋主会话',
+      parent: agent,
+      timeoutMs: payload.timeoutMs || 600000,
+      delivery: 'caller',
+      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
+    })
+    const decision = parseJsonReply(result.text) || { say: String(result.text || '').slice(0, 2000), actions: [], dispatches: [] }
+    const actions = Array.isArray(decision.actions) ? [...decision.actions] : []
+    const reports = []
+    for (const dispatch of Array.isArray(decision.dispatches) ? decision.dispatches : []) {
+      const target = String(dispatch.target || '').trim()
+      const instruction = String(dispatch.instruction || '').trim()
+      if (!target || !instruction) continue
+      const unit = units.find((u) => u.id === target || u.type === target) || { id: target, type: target }
+      try {
+        const worker = await ensureWorkerSession(target)
+        let sub = state.subagents.get(target)
+        if (!sub) {
+          const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\${worker.sessionId}`
+          try {
+            mkdirSync(dir, { recursive: true })
+            const init = `你是对象 ${target} 的操作子会话。\n职责：把主会话的人话翻译成动作。\n可用动作：${JSON.stringify(unit.actions || []).slice(0, 20000)}\n上下文：${JSON.stringify(unit.context || {}).slice(0, 20000)}\n只输出 JSON：{"actions":[{"method":"...","params":{}}]}`
+            writeFileSync(`${dir}\\init.md`, init, 'utf8')
+          } catch { /* ignore */ }
+          sub = { initialized: true, queue: Promise.resolve() }
+          state.subagents.set(target, sub)
+        }
+        const run = sub.queue.then(async () => {
+          const text = await sendToWorker(worker, `${instruction}\n只输出 JSON {"actions":[...]}`, payload.timeoutMs || 600000)
+          const childDecision = parseJsonReply(text) || { actions: [] }
+          return Array.isArray(childDecision.actions) ? childDecision.actions : []
+        })
+        sub.queue = run.catch(() => [])
+        const childActions = await run
+        actions.push(...childActions)
+        reports.push({ target, ok: true, actions: childActions.length })
+      } catch (error) {
+        reports.push({ target, ok: false, error: String(error?.message || error) })
+      }
+    }
+    state.memory.push({ at: Date.now(), say: decision.say || '', audience: decision.audience || '', actions: actions.length })
+    if (state.memory.length > 20) state.memory = state.memory.slice(-20)
+    return {
+      ok: true,
+      sessionId: mainSessionId,
+      say: decision.say || '',
+      voice: decision.voice || '',
+      audience: decision.audience || '',
+      dialogue: Array.isArray(decision.dialogue) ? decision.dialogue : [],
+      actions,
+      dispatches: reports,
+      memory: state.memory.slice(-6),
+      ms: result.ms,
+    }
+  }
+
   const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const { agent } = await ensureMainSession({ sessionId, workspace, saveName, reasoningEffort })
     const startedAt = Date.now()
@@ -495,6 +604,15 @@ export async function createHandler(ctx) {
    */
   const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false, sessionId = null, saveKey = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const rawLabel = String(label || '')
+    if (rawLabel === 'bridge' || rawLabel.startsWith('bridge:')) {
+      try {
+        const payload = JSON.parse(String(prompt || '{}'))
+        return await runBridgeTurn({ ...payload, timeoutMs: payload.timeoutMs || timeoutMs })
+      } catch (error) {
+        lastMainError = String(error?.message || error)
+        throw new Error(`BRIDGE_TURN_FAILED: ${lastMainError}`)
+      }
+    }
     const mainMatch = /^main[:|]([A-Za-z0-9._-]+)(?:#([^#]*))?(?:#([^#]*))?(?:#([^#]*))?$/.exec(rawLabel)
     const labeledSession = mainMatch?.[1] || null
     const labeledWorkspace = decodeToken(mainMatch?.[2])
@@ -580,6 +698,7 @@ export async function createHandler(ctx) {
     version,
     health,
     run,
+    bridgeTurn: runBridgeTurn,
     session: () => ({
       sessionId: mainSessionId,
       ready: Boolean(mainAgent),

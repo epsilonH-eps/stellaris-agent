@@ -13,7 +13,8 @@
  *
  * @module stellaris-agent/ai/main
  */
-import { worldDigest, clip } from '../context.mjs'
+import { worldDigest, clip, unitContext } from '../context.mjs'
+import { actionsForUnit } from '../actions.mjs'
 import { agentHome } from '../config.mjs'
 import { normalizePersona, personaSummary, personaPrompt as buildPersonaPrompt } from '../persona.mjs'
 import { VoiceLog } from '../voice.mjs'
@@ -279,11 +280,77 @@ export class MainSession {
    * 跑一轮决策。
    * @param {{reason?:string}} [options]
    */
+  async _bridgeTurn({ reason = 'timer', human = [] } = {}) {
+    if (this.ticking) return { ok: false, error: 'BUSY', reason }
+    this.ticking = true
+    const startedAt = Date.now()
+    try {
+      const world = this.getWorld()
+      if (!world) return { ok: false, error: 'NO_WORLD', reason }
+      const units = this.getUnits().map((unit) => ({
+        id: unit.id,
+        type: unit.type,
+        name: unit.name,
+        goal: unit.goal || null,
+        actions: actionsForUnit(unit.type),
+        context: unitContext(unit, world),
+      }))
+      const payload = {
+        saveKey: this.saveInfo?.key || null,
+        sessionId: this.saveInfo?.sessionId || this.dshSessionId || null,
+        polityName: this.saveInfo?.name || '群星参谋',
+        workspace: this.saveInfo?.workspace || null,
+        persona: buildPersonaPrompt(this.persona),
+        reason,
+        human,
+        units,
+        world: worldDigest(world, { completions: this.getCompletions(), maxEvents: 8, maxAlerts: 8 }),
+        timeoutMs: this.config?.ai?.dsh?.timeoutMs || 600000,
+        reasoningEffort: this.config?.ai?.main?.reasoningEffort || 'high',
+      }
+      const result = await this.backend.bridgeTurn(payload)
+      let executed = null
+      if (Array.isArray(result.actions) && result.actions.length) {
+        executed = await this.executor.submit({ unit: 'main', source: 'dsh-bridge', actions: result.actions, meta: { reason } })
+      }
+      const say = result.say || ''
+      if (say) this.chat?.outbound({ text: say, id: 'main', kind: 'say' })
+      if (result.audience) this.chat?.outbound({ text: result.audience, id: 'audience', kind: 'audience' })
+      for (const row of result.dialogue || []) {
+        if (row?.text) this.chat?.outbound({ text: row.text, id: String(row.id || 'human'), kind: 'dialogue' })
+      }
+      const voice = this._emitVoice({ say, voice: result.voice || '', mood: '' }, { reason })
+      const text = JSON.stringify({
+        say,
+        audience: result.audience || '',
+        dialogue: result.dialogue || [],
+        actions: result.actions || [],
+        dispatches: result.dispatches || [],
+      })
+      this.session.pushAssistant(text)
+      this.turns += 1
+      this.lastTickAt = Date.now()
+      this.lastError = null
+      this.lastDecision = { ...result, at: Date.now(), applied: executed }
+      this.journal?.append({ kind: 'main.bridge', text: say || result.audience || '(bridge)', meta: { reason, actions: result.actions?.length || 0, dispatched: result.dispatches?.length || 0 } })
+      this.log('main.bridge.tick', { reason, actions: result.actions?.length || 0, spawned: result.dispatches?.length || 0, ms: Date.now() - startedAt })
+      this._changed()
+      return { ok: true, reason, say, voice, audience: result.audience || '', spawned: (result.dispatches || []).map((row) => row.target), executed }
+    } catch (error) {
+      this.lastError = String(error?.message || error)
+      this.log('main.bridge.failed', { error: this.lastError })
+      return { ok: false, error: 'BRIDGE_FAILED', detail: this.lastError, reason }
+    } finally {
+      this.ticking = false
+    }
+  }
+
   async tick({ reason = 'timer' } = {}) {
     if (this.ticking) return { ok: false, error: 'BUSY', reason }
     if (!this.backend) return { ok: false, error: 'NO_BACKEND', reason }
     const world = this.getWorld()
     if (!world) return { ok: false, error: 'NO_WORLD', reason }
+    if (typeof this.backend.bridgeTurn === 'function') return this._bridgeTurn({ reason })
     this.ticking = true
     const startedAt = Date.now()
     try {
@@ -333,6 +400,9 @@ export class MainSession {
     if (!this.backend) return { ok: false, error: 'NO_BACKEND' }
     const world = this.getWorld()
     if (!world) return { ok: false, error: 'NO_WORLD' }
+    if (typeof this.backend.bridgeTurn === 'function') {
+      return this._bridgeTurn({ reason: 'human-ask', human: [{ id: String(id || 'human'), text: message }] })
+    }
 
     // 正在跑定时决策时等它结束（最多 30 秒），避免并发写同一段会话
     const deadline = Date.now() + 30000

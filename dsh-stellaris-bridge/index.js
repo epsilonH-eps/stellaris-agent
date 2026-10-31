@@ -153,6 +153,15 @@ async function handle(req, res) {
       }
     }
 
+    if (req.method === 'POST' && /^\/bridge\/turn\/?$/.test(path)) {
+      const body = await readBody(req)
+      if (!body || typeof body !== 'object') return sendJson(res, 400, { ok: false, error: 'expected json body' })
+      const current = await loadImpl()
+      if (typeof current.bridgeTurn !== 'function') return sendJson(res, 501, { ok: false, error: 'bridgeTurn unavailable' })
+      const result = await current.bridgeTurn(body)
+      return sendJson(res, 200, { ok: true, service: name, port: httpPort || desiredPort(), ...result })
+    }
+
     if (req.method === 'POST' && /^\/(run|team)\/?$/.test(path)) {
       const body = await readBody(req)
       if (!body || typeof body.prompt !== 'string' || !body.prompt.trim()) {
