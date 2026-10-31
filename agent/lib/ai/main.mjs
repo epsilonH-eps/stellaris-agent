@@ -13,7 +13,7 @@
  *
  * @module stellaris-agent/ai/main
  */
-import { worldDigest, clip, unitContext } from '../context.mjs'
+import { worldDigest, clip } from '../context.mjs'
 import { actionsForUnit } from '../actions.mjs'
 import { agentHome } from '../config.mjs'
 import { normalizePersona, personaSummary, personaPrompt as buildPersonaPrompt } from '../persona.mjs'
@@ -294,7 +294,6 @@ export class MainSession {
         name: unit.name,
         goal: unit.goal || null,
         actions: actionsForUnit(unit.type),
-        context: unitContext(unit, world),
       }))
       this.log('main.bridge.units', { count: units.length })
       const payload = {

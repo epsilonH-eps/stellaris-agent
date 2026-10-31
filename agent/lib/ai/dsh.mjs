@@ -330,11 +330,15 @@ export class DshBackend {
    * @param {{system:string, messages:Array<{role:string,content:string}>, label?:string, maxTokens?:number, timeoutMs?:number, team?:boolean}} request
    */
   async bridgeTurn(payload = {}) {
-    return this._post('/run', {
-      prompt: JSON.stringify(payload),
+    const body = JSON.stringify(payload)
+    this.log('dsh.bridge.request', { bytes: body.length, saveKey: payload.saveKey || null })
+    const result = await this._post('/run', {
+      prompt: body,
       label: 'bridge',
       timeoutMs: Number(payload.timeoutMs || this.timeoutMs),
     }, Number(payload.timeoutMs || this.timeoutMs))
+    this.log('dsh.bridge.response', { ok: result?.ok, actions: result?.actions?.length || 0 })
+    return result
   }
 
   async complete({ system, messages, label = '群星参谋', timeoutMs = null, team = false } = {}) {

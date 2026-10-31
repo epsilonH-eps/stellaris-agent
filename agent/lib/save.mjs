@@ -105,8 +105,8 @@ export function saveIdentity(state) {
   const file = resolveSaveFile(state)
   const meta = state?.meta || (latest && typeof latest === 'object' ? latest.meta : null) || {}
   const folder = file ? basename(dirname(file)) : ''
-  // v6：bridge 主会话被工具调用拖住后换代，改用无工具短提示
-  const seed = `${folder || file || 'unknown'}|v6`
+  // v7：bridge 主请求改为紧凑单位信息，避免大 body 卡住
+  const seed = `${folder || file || 'unknown'}|v7`
   const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
   return {
     key,
