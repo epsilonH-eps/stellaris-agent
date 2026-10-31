@@ -361,9 +361,15 @@ export async function createHandler(ctx) {
       }
       // 对象子会话挂到当前 DSH 主会话下面，而不是新建一棵根会话树。
       const parentAgent = mainAgent || null
+      const childOptions = {
+        ...(mainRoute?.provider ? { provider: mainRoute.provider } : {}),
+        model: mainRoute?.model || DSH_MODEL,
+        reasoningEffort: 'off',
+      }
       handle = await ctx.agents.create({
         sessionId,
         ...(parentAgent ? { parentAgent } : {}),
+        ...(childOptions ? { agentOptions: childOptions } : {}),
         meta: { cwd: workspace, title: key },
       })
     }
@@ -378,12 +384,29 @@ export async function createHandler(ctx) {
   async function disposeWorkers() {
     for (const entry of workers.values()) {
       try {
-        await entry.activation?.dispose?.()
+        await entry.handle?.dispose?.()
       } catch {
         /* ignore */
       }
     }
     workers.clear()
+  }
+
+  async function sendToWorker(worker, prompt, timeoutMs = 600000) {
+    if (typeof ctx.subagents?.sendMessage !== 'function') throw new Error('DSH 没有 sendMessage')
+    const sender = await ensureParent()
+    const child = ctx.agents?.get?.(worker.sessionId) || (await ctx.agents.resume({ resumeSessionId: worker.sessionId }))?.agent
+    if (!child) throw new Error('worker session 不是 live 状态')
+    const before = (child.session?.deriveMessages?.() || []).length
+    await ctx.subagents.sendMessage(sender, worker.sessionId, [{ type: 'text', text: String(prompt || '') }], {
+      signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
+    })
+    await child.whenIdle?.()
+    const messages = child.session?.deriveMessages?.() || []
+    const assistant = [...messages.slice(before)].reverse().find((message) => message?.role === 'assistant')
+    const text = messageText(assistant)
+    if (!text.trim()) throw new Error('worker session 没有返回 assistant 文本')
+    return text
   }
 
   const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
@@ -434,19 +457,17 @@ export async function createHandler(ctx) {
     const remembered = workers.get(label)
     if (remembered?.sessionId) {
       try {
-        const sender = await ensureParent()
-        if (typeof ctx.subagents?.sendMessage !== 'function') throw new Error('DSH 没有 sendMessage')
-        await ctx.subagents.sendMessage(sender, remembered.sessionId, [{ type: 'text', text: finalPrompt }], {
-          signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
-        })
-        const child = ctx.agents?.get?.(remembered.sessionId) || (await ctx.agents.resume({ resumeSessionId: remembered.sessionId }))?.agent
-        if (!child) throw new Error('child session 无法 resume')
-        await child.whenIdle?.()
-        const messages = child.session?.deriveMessages?.() || []
-        const assistant = [...messages].reverse().find((message) => message?.role === 'assistant')
-        const text = messageText(assistant)
-        if (!text.trim()) throw new Error('child session 没有返回 assistant 文本')
-        return { text, usage: null, ms: Date.now() - startedAt, team, label, sessionId: remembered.sessionId, session: true, reused: true }
+        const body = await sendToWorker(remembered, finalPrompt, timeoutMs)
+        return {
+          text: body,
+          usage: null,
+          ms: Date.now() - startedAt,
+          team,
+          label,
+          sessionId: remembered.sessionId,
+          session: true,
+          reused: true,
+        }
       } catch (error) {
         lastWorkerError = String(error?.message || error)
         try {
@@ -460,7 +481,7 @@ export async function createHandler(ctx) {
     try {
       const result = await runActivation(finalPrompt, {
         label,
-        parent: mainAgent || (await ensureParent()),
+        parent: await ensureParent(),
         timeoutMs,
         keepActivation: true,
         reasoningEffort: 'off',
@@ -480,7 +501,6 @@ export async function createHandler(ctx) {
     }
     const owner = await ensureParent()
     const result = await runActivation(finalPrompt, { label, parent: owner, timeoutMs, reasoningEffort: 'off' })
-    if (result.childId) workers.set(label, { key: label, sessionId: result.childId })
     return { ...result, team, label, sessionId: result.childId || null, fallback: 'activation' }
   }
 
