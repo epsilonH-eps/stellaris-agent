@@ -73,10 +73,14 @@ function fakeCtx() {
       currentInitiator: () => ({ id: 'owner' }),
       async resume({ resumeSessionId }) {
         ctx.resumedSessionId = resumeSessionId
+        if (!ctx.createdIds?.has(resumeSessionId)) throw new Error('SESSION_NOT_FOUND')
         return ctx.agents.create({ sessionId: resumeSessionId })
       },
-      async create({ sessionId }) {
+      async create({ sessionId, meta }) {
         ctx.createdSessionId = sessionId
+        ctx.createdMeta = meta
+        ctx.createdIds = ctx.createdIds || new Set()
+        ctx.createdIds.add(sessionId)
         ctx.createCount = (ctx.createCount || 0) + 1
         const messages = []
         const agent = {
@@ -91,6 +95,18 @@ function fakeCtx() {
         ctx.agent = agent
         return { agent, async dispose() {} }
       },
+    },
+    get(name) {
+      if (name === 'workspaceRegistry') {
+        return {
+          async create(dir, title) {
+            ctx.workspaceDir = dir
+            ctx.workspaceTitle = title
+            return { dir, title }
+          },
+        }
+      }
+      return null
     },
     effect(fn) {
       const disposer = fn()
@@ -206,6 +222,29 @@ test('主会话：旧 shim 不转发 sessionId 时，用 label=main:<id> 也能�
   assert.equal(result.status, 200)
   assert.equal(result.body.sessionId, 'stellaris-main-save-b')
   assert.equal(ctx.resumedSessionId, 'stellaris-main-save-b')
+})
+
+test('主会话：label 里带工作区，session 建在独立 workspace', async () => {
+  const ctx = fakeCtx()
+  apply(ctx)
+  const workspace = 'C:\\Users\\test\\.stellaris-agent\\workspace'
+  const name = '人类游牧方舟 2'
+  const token = Buffer.from(workspace, 'utf8').toString('base64url')
+  const nameToken = Buffer.from(name, 'utf8').toString('base64url')
+  const result = await call(ctx.routes.handler, {
+    method: 'POST',
+    url: '/api/stellaris-orchestrator/run',
+    body: { prompt: '工作区测试', label: `main:stellaris-main-ws#${token}#${nameToken}` },
+  })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.sessionId, 'stellaris-main-ws')
+  assert.equal(ctx.workspaceDir, workspace)
+  assert.equal(ctx.createdMeta.cwd, workspace)
+  assert.equal(ctx.createdMeta.title, name)
+  const health = await call(ctx.routes.handler, { method: 'GET', url: '/api/stellaris-orchestrator/health' })
+  assert.equal(health.body.mainWorkspace, workspace)
+  assert.equal(health.body.mainTitle, name)
+  assert.equal(health.body.workspaceRegistered, true)
 })
 
 test('DSH 路由兼容：health / run / reload 仍然可用', async () => {

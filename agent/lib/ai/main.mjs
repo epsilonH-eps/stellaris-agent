@@ -198,7 +198,7 @@ export class MainSession {
       id: 'main',
       kind: 'main',
       type: 'main',
-      label: '主会话',
+      label: this.saveInfo?.name || '主会话',
       name: this.persona.name,
       running: this.ticking,
       status: this.lastError ? 'error' : this.lastDecision ? 'ok' : 'idle',

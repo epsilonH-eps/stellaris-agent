@@ -124,7 +124,7 @@ DSH 插件（`dsh-stellaris-bridge`）是**固定端口 + 稳定 shim + 热重�
 - 同时保留 DSH Web 的 `/api/stellaris-orchestrator/*` 路由做兼容，旧配置仍能用；
 - `index.js` 只做路由与转发，几乎不再变；
 - 真正逻辑在 `lib/handler.mjs`，按 mtime 动态 import；
-- **主会话专用 session（跟着存档走）**：每个 `save games/<帝国目录>` 对应一个 `stellaris-main-<saveKey>` 会话（同目录 autosave/manual 算同一个），插件用 `ctx.agents.create()` / `resume()` 建/接；本地 transcript 存在 `~/.stellaris-agent/main-sessions/<saveKey>.json`，切存档自动换主会话；子会话仍是独立激活；
+- **主会话专用 session（跟着存档走）**：主会话在 `~/.stellaris-agent/workspace` 这个**独立 DSH 工作区**（DSH 项目“群星参谋”）里运行，不占用你平时的 DSH 工作区；每个 `save games/<帝国目录>` 单开一个 `stellaris-main-<saveKey>` 会话（同目录 autosave/manual 算同一个），**会话名称就是该存档的帝国名**（读 `meta.name`，已修正 PowerShell 输出编码）；插件用 `ctx.agents.create()` / `resume()` 建/接；本地 transcript 存在 `~/.stellaris-agent/main-sessions/<saveKey>.json`，切存档自动换主会话；子会话仍是独立激活；
 - `POST /api/stellaris-orchestrator/reload` 即可热更新，**不用重启 DSH**；
 - 程序每次启动都会"安装/更新插件 + 尝试热重载"；只有 shim 本身变了才需要重启 DSH（可选配置 `dshPlugin.restartCommand` 或在设置页手动点"重启 DSH"，默认不杀你的会话）。
 
@@ -240,7 +240,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（118 项）
+test/                       node:test（119 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```

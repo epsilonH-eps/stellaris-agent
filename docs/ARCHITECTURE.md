@@ -323,8 +323,10 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
   1. 持久化旧主会话；
   2. 清空旧单位/事件会话；
   3. 载入新存档的 transcript，重建 `MainSession`；
-  4. 把新 `sessionId` 通过 `DshBackend.setMainSession()` 带给插件；
-- DSH 插件按 `sessionId` 先 `agents.resume()`，没有就 `agents.create()`；同一个存档的 autosave 不会换主会话。
+  4. 把新 `sessionId` 与独立工作区 `<home>/workspace` 通过 `DshBackend.setMainSession()` 带给插件；
+- DSH 插件按 `sessionId` 先 `agents.resume()`，没有就 `agents.create()`；`meta.cwd` 指向
+  `<home>/workspace`，`meta.title` 用存档 `meta.name`（帝国名），并用
+  `workspaceRegistry.create()` 注册成 DSH 项目“群星参谋”；同一个存档的 autosave 不会换主会话。
 
 ### 人格与 voice
 
@@ -360,7 +362,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 118 项 node:test
+npm test                      # 119 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

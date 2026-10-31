@@ -166,6 +166,8 @@ async function handle(req, res) {
         team,
         sessionId: body.sessionId || null,
         saveKey: body.saveKey || null,
+        saveName: body.saveName || null,
+        workspace: body.workspace || null,
       })
       return sendJson(res, 200, { ok: true, service: name, port: httpPort || desiredPort(), ...result })
     }

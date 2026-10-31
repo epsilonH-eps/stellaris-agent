@@ -134,11 +134,12 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8787/api/execute `
 | POST | `/api/orchestrator/restart` | 重启（设置变更后用） |
 | POST | `/api/orchestrator/objective` | `{objective}` 更新战略目标 |
 
-> DSH 后端：主会话跟着存档走。每个 `save games/<帝国目录>` 对应一个
-> `stellaris-main-<saveKey>` DSH 会话，本地 transcript 存在
+> DSH 后端：主会话在独立工作区 `~/.stellaris-agent/workspace`（DSH 项目“群星参谋”）
+> 里运行，并跟着存档走。每个 `save games/<帝国目录>` 对应一个
+> `stellaris-main-<saveKey>` DSH 会话，**会话名称 = 存档里的帝国名**；本地 transcript 存在
 > `~/.stellaris-agent/main-sessions/<saveKey>.json`；切存档时自动换主会话。
-> `/api/stellaris-orchestrator/health` 返回 `mainSessionId` / `mainSessionReady`，
-> 子会话仍是独立激活。
+> `/api/stellaris-orchestrator/health` 返回 `mainSessionId` / `mainSessionReady` /
+> `mainWorkspace` / `mainTitle`，子会话仍是独立激活。
 
 ---
 

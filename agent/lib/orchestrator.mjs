@@ -31,6 +31,8 @@ import { readSaveState, resolveSaveDir, saveIdentity } from './save.mjs'
 import { MainSessionStore } from './main-sessions.mjs'
 import { agentHome } from './config.mjs'
 import { FailureStore } from './failures.mjs'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 export class OrchestratorError extends Error {
   constructor(message, { code = 'ORCHESTRATOR_ERROR', detail = null } = {}) {
@@ -238,6 +240,14 @@ export class Orchestrator {
       this.units.clear()
       this.eventSessions.clear()
       this.recentEvents = []
+      const workspace = join(this.home, 'workspace')
+      try {
+        mkdirSync(workspace, { recursive: true })
+      } catch {
+        /* 目录不可写时仍可用默认 cwd */
+      }
+      info.workspace = workspace
+      this.mainWorkspace = workspace
       const transcript = this.mainStore.load(info.key)
       const main = new MainSession({
         backend: this.backendInfo?.ok ? this.backend : null,
@@ -265,6 +275,7 @@ export class Orchestrator {
         saveKey: info.key,
         saveFolder: info.folder,
         saveName: info.name,
+        workspace,
       })
       this.journal?.append({
         kind: 'main.save.attach',
@@ -722,6 +733,7 @@ export class Orchestrator {
       main: this.main?.status() || null,
       mainSave: this.mainSave,
       mainSessionId: this.mainSave?.sessionId || null,
+      mainWorkspace: this.mainWorkspace || null,
       chat: this.chat?.status() || null,
       units: [...this.units.values()].map((session) => session.status()),
       events: {

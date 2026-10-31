@@ -26,6 +26,9 @@ const POWERSHELL = process.env.SYSTEMROOT
 
 const META_SCRIPT = `
 $ErrorActionPreference = 'Stop'
+# PowerShell 5.1 默认按控制台代码页输出，中文会被 Node 当成 UTF-8 读成乱码
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+$OutputEncoding = [Console]::OutputEncoding
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $src = $env:SAV_FILE
 $zip = [System.IO.Compression.ZipFile]::OpenRead($src)
@@ -94,7 +97,7 @@ export function saveIdentity(state) {
   const file = latest?.file || state?.file || null
   const meta = state?.meta || latest?.meta || {}
   const folder = file ? basename(dirname(file)) : ''
-  const seed = [folder, meta?.name || '', meta?.version || '', state?.dir || ''].join('|')
+  const seed = [folder, meta?.version || '', state?.dir || ''].join('|')
   const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
   return {
     key,
@@ -120,7 +123,7 @@ export async function readSaveMeta(saveFile, { cacheFile = null, log = () => {} 
   } catch {
     return { ok: false, error: 'SAVE_NOT_FOUND' }
   }
-  const cacheKey = `${saveFile}|${stat.mtimeMs}|${stat.size}`
+  const cacheKey = `v2|${saveFile}|${stat.mtimeMs}|${stat.size}`
   if (cacheFile && existsSync(cacheFile)) {
     try {
       const cached = JSON.parse(readFileSync(cacheFile, 'utf8'))

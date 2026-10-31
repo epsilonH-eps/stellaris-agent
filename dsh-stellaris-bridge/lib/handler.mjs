@@ -9,6 +9,7 @@
  * @module dsh-stellaris-bridge/handler
  */
 import { randomUUID } from 'node:crypto'
+import { mkdirSync } from 'node:fs'
 
 export const version = '2.0.0'
 
@@ -32,6 +33,9 @@ export async function createHandler(ctx) {
   let mainCreatedAt = 0
   let lastMainError = null
   let mainRoute = null
+  let mainWorkspace = null
+  let workspaceRegistered = false
+  let mainTitle = null
 
   const ensureParent = async () => {
     if (parent) return parent
@@ -80,6 +84,9 @@ export async function createHandler(ctx) {
     mainSessionMessages: mainAgent?.session?.deriveMessages?.().length || 0,
     mainSessionRoles: mainAgent?.session?.deriveMessages?.().map((message) => roleOf(message)) || [],
     mainRoute,
+    mainWorkspace,
+    workspaceRegistered,
+    mainTitle,
     hasDefaultModel: Boolean(defaultModelService()),
     lastMainError,
   })
@@ -88,21 +95,31 @@ export async function createHandler(ctx) {
     return message?.role ?? message?.message?.role ?? null
   }
 
+  function decodeToken(value) {
+    if (!value) return null
+    try {
+      return Buffer.from(value, 'base64url').toString('utf8') || null
+    } catch {
+      return null
+    }
+  }
+
   /**
    * 主会话专用：在 DSH 里新建一个真正的 session，并复用同一个 Agent。
    * 这样主会话在 DSH 里是一条独立会话，而不是每次 run 都临时 spawn 一个一次性激活。
    */
-  const ensureMainSession = async ({ sessionId = null } = {}) => {
-    if (mainAgent && (!sessionId || mainSessionId === sessionId)) {
+  const ensureMainSession = async ({ sessionId = null, workspace = null, saveName = null } = {}) => {
+    const desiredWorkspace = workspace || conversationCwd()
+    const desiredTitle = saveName || '群星参谋 · 主会话'
+    if (mainAgent && (!sessionId || mainSessionId === sessionId) && mainWorkspace === desiredWorkspace && mainTitle === desiredTitle) {
       return { agent: mainAgent, sessionId: mainSessionId }
     }
     const desired = sessionId || `stellaris-main-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
-    if (mainAgent && mainSessionId === desired) return { agent: mainAgent, sessionId: mainSessionId }
-    if (mainAgent && mainSessionId !== desired) {
+    if (mainAgent && (mainSessionId !== desired || mainWorkspace !== desiredWorkspace || mainTitle !== desiredTitle)) {
       try {
         await mainHandle?.dispose?.()
       } catch {
-        /* 切存档 */
+        /* 切存档/切工作区 */
       }
       mainHandle = null
       mainAgent = null
@@ -111,6 +128,19 @@ export async function createHandler(ctx) {
     }
     if (typeof ctx.agents?.create !== 'function') throw new Error('DSH 没有 agents.create，无法新建主会话 session')
     mainSessionId = desired
+    try {
+      mkdirSync(desiredWorkspace, { recursive: true })
+    } catch {
+      /* 目录不可写时让 DSH 自己报错 */
+    }
+    // 把这个目录注册成 DSH 的独立 Workspace（有 workspaceRegistry 时）
+    try {
+      const registry = typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : null
+      const project = await registry?.create?.(desiredWorkspace, '群星参谋')
+      workspaceRegistered = Boolean(project)
+    } catch {
+      /* workspace 注册失败不影响 session 创建 */
+    }
     let agentOptions = null
     try {
       const selection = defaultModelService()?.currentSelection?.()
@@ -148,18 +178,20 @@ export async function createHandler(ctx) {
     if (!mainHandle) {
       mainHandle = await ctx.agents.create({
         sessionId: mainSessionId,
-        meta: { cwd: conversationCwd(), title: '群星参谋 · 主会话' },
+        meta: { cwd: desiredWorkspace, title: desiredTitle },
         ...(agentOptions ? { agentOptions } : {}),
       })
     }
     mainAgent = mainHandle?.agent || mainHandle
     if (!mainAgent || typeof mainAgent.followup !== 'function') throw new Error('agents.create 没有返回可用的 Agent')
     mainCreatedAt = Date.now()
+    mainWorkspace = desiredWorkspace
+    mainTitle = desiredTitle
     return { agent: mainAgent, sessionId: mainSessionId }
   }
 
-  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null } = {}) => {
-    const { agent } = await ensureMainSession({ sessionId })
+  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null } = {}) => {
+    const { agent } = await ensureMainSession({ sessionId, workspace, saveName })
     if (typeof ctx.subagents?.startActivation !== 'function') throw new Error('这台 DSH 没有 subagents 服务')
     const startedAt = Date.now()
     const controller = new AbortController()
@@ -203,15 +235,23 @@ export async function createHandler(ctx) {
    * @param {string} prompt
    * @param {{label?:string, timeoutMs?:number, team?:boolean}} [options]
    */
-  const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false, sessionId = null, saveKey = null } = {}) => {
+  const run = async (prompt, { label = '群星参谋', timeoutMs = 600000, team = false, sessionId = null, saveKey = null, workspace = null, saveName = null } = {}) => {
     const rawLabel = String(label || '')
-    // 兼容旧 shim：主会话 id 也可以编码在 label 里（main:<sessionId>），这样
-    // 即使插件壳还没重启、不会转发 sessionId 字段，也能按存档复用 session。
-    const labeledSession = /^main[:|]([A-Za-z0-9._-]+)$/.exec(rawLabel)?.[1] || null
+    // 兼容旧 shim：主会话 id / 工作区 / 帝国名可以编码在 label 里
+    // （main:<sessionId>#<base64url 工作区>#<base64url 帝国名>）。
+    const mainMatch = /^main[:|]([A-Za-z0-9._-]+)(?:#([^#]*))?(?:#([^#]*))?$/.exec(rawLabel)
+    const labeledSession = mainMatch?.[1] || null
+    const labeledWorkspace = decodeToken(mainMatch?.[2])
+    const labeledSaveName = decodeToken(mainMatch?.[3])
     const isMain = rawLabel === 'main' || Boolean(labeledSession) || /主会话/.test(rawLabel)
     if (isMain) {
       try {
-        return await runMainSession(prompt, { timeoutMs, sessionId: sessionId || labeledSession })
+        return await runMainSession(prompt, {
+          timeoutMs,
+          sessionId: sessionId || labeledSession,
+          workspace: workspace || labeledWorkspace,
+          saveName: saveName || labeledSaveName,
+        })
       } catch (error) {
         lastMainError = String(error?.message || error)
         console.warn(`[stellaris-bridge] 主会话 session 失败，回退到一次性激活：${lastMainError}`)

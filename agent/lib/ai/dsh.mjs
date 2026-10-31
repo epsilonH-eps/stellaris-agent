@@ -201,8 +201,8 @@ export class DshBackend {
   }
 
   /** 主会话跟着存档走：把当前存档的 DSH session id 带给插件。 */
-  setMainSession({ sessionId = null, saveKey = null, saveFolder = null, saveName = null } = {}) {
-    this.mainSession = sessionId ? { sessionId, saveKey, saveFolder, saveName } : null
+  setMainSession({ sessionId = null, saveKey = null, saveFolder = null, saveName = null, workspace = null } = {}) {
+    this.mainSession = sessionId ? { sessionId, saveKey, saveFolder, saveName, workspace } : null
     return this.mainSession
   }
 
@@ -332,7 +332,17 @@ export class DshBackend {
   async complete({ system, messages, label = '群星参谋', timeoutMs = null, team = false } = {}) {
     const prompt = flattenPrompt(system, messages)
     try {
-      const mainLabel = label === 'main' && this.mainSession?.sessionId ? `main:${this.mainSession.sessionId}` : label
+      const mainLabel = label === 'main' && this.mainSession?.sessionId
+        ? `main:${this.mainSession.sessionId}#${
+            this.mainSession.workspace
+              ? Buffer.from(this.mainSession.workspace, 'utf8').toString('base64url')
+              : ''
+          }#${
+            this.mainSession.saveName
+              ? Buffer.from(this.mainSession.saveName, 'utf8').toString('base64url')
+              : ''
+          }`
+        : label
       const payload = await this._post(team ? '/team' : '/run', {
         prompt,
         label: mainLabel,
@@ -343,7 +353,7 @@ export class DshBackend {
               saveKey: this.mainSession.saveKey,
               saveFolder: this.mainSession.saveFolder,
               saveName: this.mainSession.saveName,
-            }
+              workspace: this.mainSession.workspace,            }
           : {}),
       }, timeoutMs || this.timeoutMs)
       const usage = payload.usage || null
