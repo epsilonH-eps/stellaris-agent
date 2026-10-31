@@ -27,6 +27,13 @@ test('存档身份：同一目录的 autosave/manual 是同一个主会话', () 
   assert.equal(a.folder, '2_556003495')
 })
 
+test('存档身份：版本/标题变化不会让同一目录换主会话', () => {
+  const a = saveState('2_556003495', '人类游牧方舟 2')
+  const b = { ...a, meta: { ...a.meta, version: 'Cygnus v4.5.3', name: '人类游牧方舟 2（改名）' } }
+  assert.equal(saveIdentity(a).key, saveIdentity(b).key)
+  assert.equal(saveIdentity(a).sessionId, saveIdentity(b).sessionId)
+})
+
 test('MainSessionStore：每个 saveKey 独立持久化', () => {
   const home = mkdtempSync(join(tmpdir(), 'stellaris-main-sessions-'))
   try {

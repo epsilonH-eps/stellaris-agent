@@ -317,7 +317,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 
 ### 每存档一个主会话
 
-- `save.mjs` 的 `saveIdentity()` 用 `save games/<帝国目录>`（同目录 autosave/manual 视为同一存档）生成稳定 `saveKey`，并派生 `stellaris-main-<saveKey>`；
+- `save.mjs` 的 `saveIdentity()` 只用 `save games/<帝国目录>` 生成稳定 `saveKey`（同目录 autosave/manual、版本号变化都视为同一存档），并派生 `stellaris-main-<saveKey>`；`switchMainSave()` 如果 `world.save` 没有 `meta`，会补读一次存档 `meta`，用来给 DSH 会话取帝国名；
 - `MainSessionStore` 把每个存档的主会话 transcript 存在 `<home>/main-sessions/<saveKey>.json`；
 - 编排器启动时 `switchMainSave(world.save)`；`startSaveWatch()` 每 30 秒重新读存档目录，发现 `saveKey` 变化就：
   1. 持久化旧主会话；
@@ -380,7 +380,7 @@ HTTP：`GET /api/failures`、`/api/failures/<id>`、`/api/failures/<id>/markdown
 ## 11. 测试与校验
 
 ```powershell
-npm test                      # 126 项 node:test
+npm test                      # 127 项 node:test
 node tools/gen-actions-doc.mjs
 powershell -File agent/gui/StellarisAgent.ps1 -SelfTest   # 只构建窗口
 .\run.cmd doctor              # 真机：桥/后端/插件/路径

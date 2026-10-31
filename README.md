@@ -244,7 +244,7 @@ agent/
   native/                   stellaris_bridge.dll + 注入器
 dsh-stellaris-bridge/       DSH 插件（shim + handler）
 engine/lib/                 仅保留：路径探测 / Steam / 事件索引 / Clausewitz 解析
-test/                       node:test（126 项）
+test/                       node:test（127 项）
 tools/gen-actions-doc.mjs   生成 docs/ACTION-CATALOG.md
 docs/                       ARCHITECTURE / API / ACTIONS / legacy
 ```

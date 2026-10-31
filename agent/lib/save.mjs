@@ -92,12 +92,20 @@ export function latestSave(dir) {
  * 视为**同一个存档**，对应同一个主会话。
  * @param {{latest?:object, meta?:object, dir?:string}|null} state
  */
+export function resolveSaveFile(state) {
+  const latest = state?.latest
+  if (state?.file) return state.file
+  if (typeof latest === 'string' && state?.dir) return join(state.dir, latest)
+  if (latest?.file) return latest.file
+  return null
+}
+
 export function saveIdentity(state) {
   const latest = state?.latest || null
-  const file = latest?.file || state?.file || null
-  const meta = state?.meta || latest?.meta || {}
+  const file = resolveSaveFile(state)
+  const meta = state?.meta || (latest && typeof latest === 'object' ? latest.meta : null) || {}
   const folder = file ? basename(dirname(file)) : ''
-  const seed = [folder, meta?.version || '', state?.dir || ''].join('|')
+  const seed = folder || file || 'unknown'
   const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
   return {
     key,

@@ -27,7 +27,7 @@ import { MainSession } from './ai/main.mjs'
 import { EventSession, UnitSession } from './ai/worker.mjs'
 import { resolveUserDir } from '../../engine/lib/paths.js'
 import { resolveInstallDir } from '../../engine/lib/steam.js'
-import { readSaveState, resolveSaveDir, saveIdentity } from './save.mjs'
+import { readSaveState, readSaveMeta, resolveSaveDir, resolveSaveFile, saveIdentity } from './save.mjs'
 import { MainSessionStore } from './main-sessions.mjs'
 import { agentHome } from './config.mjs'
 import { FailureStore } from './failures.mjs'
@@ -241,7 +241,20 @@ export class Orchestrator {
    *  - 切换时清掉旧的单位会话，避免跨存档复用。
    */
   async switchMainSave(saveState, { reason = 'save', force = false } = {}) {
-    const info = saveIdentity(saveState)
+    // world.save 往往只有目录/文件名，没有 meta.name；主会话标题要用帝国名，
+    // 所以在切换时补读一次存档 meta（有缓存）。
+    let state = saveState
+    const saveFile = resolveSaveFile(state)
+    if (saveFile && !state.file) state = { ...state, file: saveFile }
+    if (saveFile && !state.meta) {
+      try {
+        const meta = await readSaveMeta(saveFile, { cacheFile: join(this.home, 'save-meta.json'), log: this.log })
+        if (meta.ok) state = { ...state, meta: meta.meta }
+      } catch (error) {
+        this.log('orchestrator.main.meta.failed', { error: String(error?.message || error) })
+      }
+    }
+    const info = saveIdentity(state)
     if (!force && this.main && this.mainSave?.key === info.key) return this.main
     if (this.switchingSave) return this.main
     this.switchingSave = true
