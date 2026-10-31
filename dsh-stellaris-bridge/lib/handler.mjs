@@ -216,26 +216,51 @@ export async function createHandler(ctx) {
       }
     }
     mainRoute = agentOptions
-    // 同一个存档已有 DSH session 时 resume；没有就按 saveKey 派生的 id 新建
-    if (typeof ctx.agents?.resume === 'function') {
+    // 同一个存档已有 DSH session 时 resume；没有就按 saveKey 派生的 id 新建。
+    // 插件热重载后 handle 丢了但 session 还 live，此时先按 id 找回 Agent。
+    mainAgent = null
+    try {
+      const live = typeof ctx.agents?.get === 'function' ? ctx.agents.get(mainSessionId) : null
+      if (live) mainAgent = live
+    } catch {
+      mainAgent = null
+    }
+    if (!mainAgent && typeof ctx.agents?.resume === 'function') {
       try {
         mainHandle = await ctx.agents.resume({
           resumeSessionId: mainSessionId,
           ...(agentOptions ? { agentOptions } : {}),
         })
+        mainAgent = mainHandle?.agent || mainHandle
       } catch {
         mainHandle = null
+        mainAgent = null
       }
     }
-    if (!mainHandle) {
-      mainHandle = await ctx.agents.create({
-        sessionId: mainSessionId,
-        meta: { cwd: desiredWorkspace, title: desiredTitle },
-        ...(agentOptions ? { agentOptions } : {}),
-      })
+    if (!mainAgent) {
+      try {
+        mainHandle = await ctx.agents.create({
+          sessionId: mainSessionId,
+          meta: { cwd: desiredWorkspace, title: desiredTitle },
+          ...(agentOptions ? { agentOptions } : {}),
+        })
+        mainAgent = mainHandle?.agent || mainHandle
+      } catch (error) {
+        // create 报 already exists 时再取一次 live agent
+        try {
+          mainAgent = typeof ctx.agents?.get === 'function' ? ctx.agents.get(mainSessionId) : null
+        } catch {
+          mainAgent = null
+        }
+        if (!mainAgent) throw error
+      }
     }
-    mainAgent = mainHandle?.agent || mainHandle
     if (!mainAgent || typeof mainAgent.followup !== 'function') throw new Error('agents.create 没有返回可用的 Agent')
+    mainHandle = mainHandle || null
+    // 之前的失败可能把 main 标签误当成 worker，清掉这类脏缓存
+    for (const key of [...workers.keys()]) {
+      if (String(key).startsWith('main:')) workers.delete(key)
+    }
     mainCreatedAt = Date.now()
     mainWorkspace = desiredWorkspace
     mainTitle = desiredTitle
@@ -463,7 +488,8 @@ export async function createHandler(ctx) {
         })
       } catch (error) {
         lastMainError = String(error?.message || error)
-        console.warn(`[stellaris-bridge] 主会话 session 失败，回退到一次性激活：${lastMainError}`)
+        console.warn(`[stellaris-bridge] 主会话 session 失败：${lastMainError}`)
+        throw new Error(`MAIN_SESSION_FAILED: ${lastMainError}`)
       }
     }
     if (typeof ctx.subagents?.startActivation !== 'function') {
