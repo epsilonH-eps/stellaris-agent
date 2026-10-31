@@ -480,20 +480,23 @@ export async function createHandler(ctx) {
 
   async function sendToWorker(worker, prompt, timeoutMs = 600000) {
     const controller = typeof ctx.get === 'function' ? ctx.get('sessionController') : null
-    let child = null
-    try {
-      child = typeof ctx.agents?.resume === 'function'
-        ? (await ctx.agents.resume({ resumeSessionId: worker.sessionId }))?.agent || null
-        : null
-    } catch {
-      child = null
+    let child = typeof ctx.agents?.get === 'function' ? ctx.agents.get(worker.sessionId) : null
+    if (!child) {
+      try {
+        child = typeof ctx.agents?.resume === 'function'
+          ? (await ctx.agents.resume({ resumeSessionId: worker.sessionId, ...(mainAgent ? { parentAgent: mainAgent } : {}) }))?.agent || null
+          : null
+      } catch {
+        child = null
+      }
     }
-    if (!child && typeof ctx.agents?.get === 'function') child = ctx.agents.get(worker.sessionId)
     if (!child) throw new Error('worker session 不是 live 状态')
     const before = (child.session?.deriveMessages?.() || []).length
-    if (!mainAgent) throw new Error('主会话不可用，无法给 worker 发消息')
-    if (typeof ctx.subagents?.prompt === 'function') {
-      // Continuable child 的专用控制接口，允许 cold resume + queue。
+    if (typeof ctx.subagents?.sendMessage === 'function' && mainAgent) {
+      await ctx.subagents.sendMessage(mainAgent, worker.sessionId, [{ type: 'text', text: String(prompt || '') }], {
+        signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
+      })
+    } else if (typeof ctx.subagents?.prompt === 'function' && mainAgent) {
       await ctx.subagents.prompt({
         parentSessionId: mainSessionId,
         childSessionId: worker.sessionId,
@@ -502,10 +505,6 @@ export async function createHandler(ctx) {
         requestId: randomUUID(),
         content: [{ type: 'text', text: String(prompt || '') }],
       }, AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)))
-    } else if (typeof ctx.subagents?.sendMessage === 'function') {
-      await ctx.subagents.sendMessage(mainAgent, worker.sessionId, [{ type: 'text', text: String(prompt || '') }], {
-        signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
-      })
     } else {
       throw new Error('DSH 没有可用的子会话消息接口')
     }
@@ -665,7 +664,12 @@ export async function createHandler(ctx) {
               text = await sendToWorker({ sessionId: sub.childId }, `${instruction}\n只输出 JSON {"actions":[...]}`, payload.timeoutMs || 600000)
               didReuse = true
             } catch (error) {
-              reuseError = String(error?.message || error)
+              reuseError = [
+                error?.code || '',
+                String(error?.message || error),
+                error?.cause?.code || '',
+                String(error?.cause?.message || ''),
+              ].filter(Boolean).join(' | ')
               sub.childId = null
             }
           }
