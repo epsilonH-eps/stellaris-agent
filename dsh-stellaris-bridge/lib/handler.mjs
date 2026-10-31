@@ -479,14 +479,36 @@ export async function createHandler(ctx) {
   }
 
   async function sendToWorker(worker, prompt, timeoutMs = 600000) {
-    if (typeof ctx.subagents?.sendMessage !== 'function') throw new Error('DSH 没有 sendMessage')
-    const sender = await ensureParent()
-    const child = ctx.agents?.get?.(worker.sessionId) || (await ctx.agents.resume({ resumeSessionId: worker.sessionId }))?.agent
+    const controller = typeof ctx.get === 'function' ? ctx.get('sessionController') : null
+    let child = null
+    try {
+      child = typeof ctx.agents?.resume === 'function'
+        ? (await ctx.agents.resume({ resumeSessionId: worker.sessionId }))?.agent || null
+        : null
+    } catch {
+      child = null
+    }
+    if (!child && typeof ctx.agents?.get === 'function') child = ctx.agents.get(worker.sessionId)
     if (!child) throw new Error('worker session 不是 live 状态')
     const before = (child.session?.deriveMessages?.() || []).length
-    await ctx.subagents.sendMessage(sender, worker.sessionId, [{ type: 'text', text: String(prompt || '') }], {
-      signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
-    })
+    if (!mainAgent) throw new Error('主会话不可用，无法给 worker 发消息')
+    if (typeof ctx.subagents?.prompt === 'function') {
+      // Continuable child 的专用控制接口，允许 cold resume + queue。
+      await ctx.subagents.prompt({
+        parentSessionId: mainSessionId,
+        childSessionId: worker.sessionId,
+        mode: 'continuable',
+        delivery: 'queue',
+        requestId: randomUUID(),
+        content: [{ type: 'text', text: String(prompt || '') }],
+      }, AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)))
+    } else if (typeof ctx.subagents?.sendMessage === 'function') {
+      await ctx.subagents.sendMessage(mainAgent, worker.sessionId, [{ type: 'text', text: String(prompt || '') }], {
+        signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
+      })
+    } else {
+      throw new Error('DSH 没有可用的子会话消息接口')
+    }
     await child.whenIdle?.()
     const messages = child.session?.deriveMessages?.() || []
     const assistant = [...messages.slice(before)].reverse().find((message) => message?.role === 'assistant')
@@ -636,11 +658,38 @@ export async function createHandler(ctx) {
           let text = null
           let result = null
           let didReuse = false
+          let reuseError = null
+          let continuableError = null
           if (sub.childId) {
             try {
               text = await sendToWorker({ sessionId: sub.childId }, `${instruction}\n只输出 JSON {"actions":[...]}`, payload.timeoutMs || 600000)
               didReuse = true
-            } catch {
+            } catch (error) {
+              reuseError = String(error?.message || error)
+              sub.childId = null
+            }
+          }
+          if (!text && typeof ctx.subagents?.startContinuable === 'function') {
+            try {
+              const initPrompt = sub.initialized ? '' : `【初始化】${JSON.stringify(unit.actions || [])}\n`
+              const cont = await ctx.subagents.startContinuable({
+                provider: 'spawn',
+                label: target,
+                request: {
+                  prompt: [{ type: 'text', text: `${initPrompt}${instruction}\n只输出 JSON {"actions":[...]}` }],
+                  parent: agent,
+                  agentOptions: { reasoningEffort: 'low' },
+                },
+                signal: AbortSignal.timeout(payload.timeoutMs || 120000),
+              })
+              sub.childId = cont.childId
+              const child = ctx.agents?.get?.(cont.childId) || (await ctx.agents.resume({ resumeSessionId: cont.childId }))?.agent
+              await child?.whenIdle?.()
+              const messages = child?.session?.deriveMessages?.() || []
+              const assistant = [...messages].reverse().find((message) => message?.role === 'assistant')
+              text = messageText(assistant)
+            } catch (error) {
+              continuableError = String(error?.message || error)
               sub.childId = null
             }
           }
@@ -670,12 +719,12 @@ export async function createHandler(ctx) {
           }
           sub.initialized = true
           const childDecision = parseJsonReply(text) || { actions: [] }
-          return { actions: Array.isArray(childDecision.actions) ? childDecision.actions : [], reused: didReuse }
+          return { actions: Array.isArray(childDecision.actions) ? childDecision.actions : [], reused: didReuse, reuseError, continuableError }
         })
         sub.queue = run.catch(() => ({ actions: [], reused: false }))
         const outcome = await run
         actions.push(...outcome.actions)
-        reports.push({ target, ok: true, actions: outcome.actions.length, reused: outcome.reused, childId: sub.childId || null })
+        reports.push({ target, ok: true, actions: outcome.actions.length, reused: outcome.reused, reuseError: outcome.reuseError || null, continuableError: outcome.continuableError || null, childId: sub.childId || null })
       } catch (error) {
         reports.push({ target, ok: false, error: String(error?.message || error) })
       }
