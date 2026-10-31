@@ -86,6 +86,8 @@ function fakeCtx() {
         const agent = {
           session: { deriveMessages: () => messages.slice() },
           followup({ content }) {
+            ctx.followupPrompts = ctx.followupPrompts || []
+            ctx.followupPrompts.push(content?.[0]?.text || '')
             messages.push({ role: 'user', content })
             messages.push({ role: 'assistant', content: [{ type: 'text', text: `主会话说：${content?.[0]?.text || ''}` }] })
           },

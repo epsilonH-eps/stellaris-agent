@@ -8,7 +8,7 @@
  *
  * @module dsh-stellaris-bridge/handler
  */
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 
 export const version = '2.0.0'
@@ -37,6 +37,8 @@ export async function createHandler(ctx) {
   let workspaceRegistered = false
   let mainTitle = null
   let titleRenamed = false
+  let lastWorkerError = null
+  const workers = new Map()
 
   const ensureParent = async () => {
     if (parent) return parent
@@ -89,6 +91,9 @@ export async function createHandler(ctx) {
     workspaceRegistered,
     mainTitle,
     titleRenamed,
+    workers: [...workers.values()].map((entry) => ({ key: entry.key, sessionId: entry.sessionId })),
+    workerCount: workers.size,
+    lastWorkerError,
     hasDefaultModel: Boolean(defaultModelService()),
     lastMainError,
   })
@@ -106,6 +111,20 @@ export async function createHandler(ctx) {
     }
   }
 
+  async function renameMainTitle(agent, title) {
+    try {
+      const titleService = typeof ctx.get === 'function' ? ctx.get('sessionTitle') : null
+      const session = agent?.session || agent?.handle?.session
+      if (!titleService?.rename || !session || !title) return false
+      await titleService.rename(session, title)
+      titleRenamed = true
+      return true
+    } catch (error) {
+      console.warn(`[stellaris-bridge] 设置会话标题失败：${String(error?.message || error)}`)
+      return false
+    }
+  }
+
   /**
    * 主会话专用：在 DSH 里新建一个真正的 session，并复用同一个 Agent。
    * 这样主会话在 DSH 里是一条独立会话，而不是每次 run 都临时 spawn 一个一次性激活。
@@ -113,11 +132,16 @@ export async function createHandler(ctx) {
   const ensureMainSession = async ({ sessionId = null, workspace = null, saveName = null } = {}) => {
     const desiredWorkspace = workspace || conversationCwd()
     const desiredTitle = saveName || '群星参谋 · 主会话'
-    if (mainAgent && (!sessionId || mainSessionId === sessionId) && mainWorkspace === desiredWorkspace && mainTitle === desiredTitle) {
+    if (mainAgent && (!sessionId || mainSessionId === sessionId) && mainWorkspace === desiredWorkspace) {
+      if (mainTitle !== desiredTitle) {
+        await renameMainTitle(mainAgent, desiredTitle)
+        mainTitle = desiredTitle
+      }
       return { agent: mainAgent, sessionId: mainSessionId }
     }
     const desired = sessionId || `stellaris-main-${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
-    if (mainAgent && (mainSessionId !== desired || mainWorkspace !== desiredWorkspace || mainTitle !== desiredTitle)) {
+    if (mainAgent && (mainSessionId !== desired || mainWorkspace !== desiredWorkspace)) {
+      await disposeWorkers()
       try {
         await mainHandle?.dispose?.()
       } catch {
@@ -144,15 +168,8 @@ export async function createHandler(ctx) {
       /* workspace 注册失败不影响 session 创建 */
     }
     let agentOptions = null
-    try {
-      const selection = defaultModelService()?.currentSelection?.()
-      if (selection?.provider && selection?.model) {
-        agentOptions = { provider: selection.provider, model: selection.model }
-        if (selection.reasoningEffort) agentOptions.reasoningEffort = selection.reasoningEffort
-      }
-    } catch {
-      agentOptions = null
-    }
+    // 不硬编码模型/推理强度：DSH 的默认模型与推理强度由 DSH 设置控制。
+    // 如果调用方显式传 reasoningEffort，再在下面补进 agentOptions。
     if (!agentOptions) {
       try {
         const owner = ctx.agents?.currentInitiator?.() || (ctx.agents?.list?.() || [])[0] || null
@@ -189,36 +206,62 @@ export async function createHandler(ctx) {
     mainCreatedAt = Date.now()
     mainWorkspace = desiredWorkspace
     mainTitle = desiredTitle
-    // DSH 的 meta.title 不是会话标题；标题要通过 sessionTitle.rename() 写 session/title
-    try {
-      const titleService = typeof ctx.get === 'function' ? ctx.get('sessionTitle') : null
-      const session = mainAgent.session || mainHandle?.session
-      if (titleService?.rename && session) await titleService.rename(session, desiredTitle)
-      titleRenamed = Boolean(titleService?.rename && session)
-    } catch (error) {
-      titleRenamed = false
-      console.warn(`[stellaris-bridge] 设置会话标题失败：${String(error?.message || error)}`)
-    }
+    titleRenamed = await renameMainTitle(mainAgent, desiredTitle)
     return { agent: mainAgent, sessionId: mainSessionId }
   }
 
-  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null } = {}) => {
-    const { agent } = await ensureMainSession({ sessionId, workspace, saveName })
+  function messageText(message) {
+    const content = message?.content ?? message?.message?.content
+    if (typeof content === 'string') return content
+    if (!Array.isArray(content)) return ''
+    return content
+      .filter((block) => block && block.type === 'text')
+      .map((block) => block.text || '')
+      .join('')
+  }
+
+  async function followupInSession(agent, prompt, timeoutMs = 600000) {
+    if (!agent || typeof agent.followup !== 'function') throw new Error('DSH Agent 不支持 followup')
+    const before = (agent.session?.deriveMessages?.() || []).length
+    await agent.followup({
+      content: [{ type: 'text', text: String(prompt || '') }],
+      source: { kind: 'user' },
+    })
+    if (typeof agent.whenIdle === 'function') {
+      let timer = null
+      await Promise.race([
+        agent.whenIdle(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('DSH followup 超时')), Math.max(30000, Number(timeoutMs) || 600000))
+        }),
+      ]).finally(() => clearTimeout(timer))
+    }
+    const messages = agent.session?.deriveMessages?.() || []
+    const fresh = messages.slice(before)
+    const assistant = [...fresh].reverse().find((message) => message?.role === 'assistant' || message?.message?.role === 'assistant')
+    const text = messageText(assistant)
+    if (!text.trim()) throw new Error('DSH followup 没有返回 assistant 文本')
+    return text
+  }
+
+  async function runActivation(prompt, { label = '群星参谋', parent = null, timeoutMs = 600000, childId = null, delivery = 'caller', keepActivation = false } = {}) {
     if (typeof ctx.subagents?.startActivation !== 'function') throw new Error('这台 DSH 没有 subagents 服务')
-    const startedAt = Date.now()
+    const owner = parent || (await ensureParent())
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), Math.max(30000, Number(timeoutMs) || 600000))
     let activation = null
+    const startedAt = Date.now()
     try {
       activation = await ctx.subagents.startActivation({
         provider: 'spawn',
-        label: '群星主会话',
+        label: String(label).slice(0, 80),
         request: {
           prompt: [{ type: 'text', text: String(prompt || '') }],
-          parent: agent,
+          parent: owner,
         },
+        ...(childId ? { childId } : {}),
         signal: controller.signal,
-        delivery: 'caller',
+        delivery,
       })
       const result = await activation.result
       const output = Array.isArray(result?.output) ? result.output : []
@@ -226,21 +269,113 @@ export async function createHandler(ctx) {
         .filter((block) => block && block.type === 'text')
         .map((block) => block.text)
         .join('')
-      return {
-        text,
-        usage: result?.usage || null,
-        ms: Date.now() - startedAt,
-        sessionId: mainSessionId,
-        session: true,
-      }
+      if (keepActivation) return { text, usage: result?.usage || null, ms: Date.now() - startedAt, childId: activation.childId || null, activation, keepActivation: true }
+      return { text, usage: result?.usage || null, ms: Date.now() - startedAt, childId: activation.childId || null }
     } finally {
       clearTimeout(timer)
-      try {
-        await activation?.dispose?.()
-      } catch {
-        /* 已结束 */
+      if (!keepActivation) {
+        try {
+          await activation?.dispose?.()
+        } catch {
+          /* 已结束 */
+        }
       }
     }
+  }
+
+  function workerSessionId(label) {
+    return `stellaris-unit-${createHash('sha1').update(String(label || 'worker')).digest('hex').slice(0, 12)}`
+  }
+
+  function appendUser(agent, text) {
+    if (!text || !agent?.session?.append) return
+    try {
+      agent.session.append('user/message', {
+        content: [{ type: 'text', text: String(text) }],
+        source: { kind: 'user' },
+      }, { surfaceOp: 'append' })
+    } catch {
+      /* 会话只读时不阻塞返回 */
+    }
+  }
+
+  function appendAssistant(agent, text) {
+    if (!text || !agent?.session?.append) return
+    try {
+      agent.session.append('assistant/message', {
+        turn: 0,
+        step: 0,
+        message: { role: 'assistant', content: [{ type: 'text', text: String(text) }] },
+      }, { surfaceOp: 'append' })
+    } catch {
+      /* 会话只读时不阻塞返回 */
+    }
+  }
+
+  async function ensureWorkerSession(label) {
+    const key = String(label || 'worker')
+    const workspace = mainWorkspace || conversationCwd()
+    const cached = workers.get(key)
+    if (cached?.agent && cached.workspace === workspace) return cached
+    if (cached) {
+      try {
+        await cached.handle?.dispose?.()
+      } catch {
+        /* 旧 worker */
+      }
+      workers.delete(key)
+    }
+    const sessionId = workerSessionId(key)
+    let handle = null
+    if (typeof ctx.agents?.resume === 'function') {
+      try {
+        handle = await ctx.agents.resume({ resumeSessionId: sessionId })
+      } catch {
+        handle = null
+      }
+    }
+    if (!handle) {
+      if (typeof ctx.agents?.create !== 'function') throw new Error('DSH 没有 agents.create，无法创建 worker session')
+      try {
+        mkdirSync(workspace, { recursive: true })
+      } catch {
+        /* ignore */
+      }
+      // 对象子会话挂到当前 DSH 主会话下面，而不是新建一棵根会话树。
+      const parentAgent = mainAgent || null
+      handle = await ctx.agents.create({
+        sessionId,
+        ...(parentAgent ? { parentAgent } : {}),
+        meta: { cwd: workspace, title: key },
+      })
+    }
+    const agent = handle?.agent || handle
+    if (!agent || typeof agent.followup !== 'function') throw new Error('worker session 没有返回可用的 Agent')
+    const entry = { key, sessionId, workspace, handle, agent }
+    workers.set(key, entry)
+    await renameMainTitle(agent, key)
+    return entry
+  }
+
+  async function disposeWorkers() {
+    for (const entry of workers.values()) {
+      try {
+        await entry.activation?.dispose?.()
+      } catch {
+        /* ignore */
+      }
+    }
+    workers.clear()
+  }
+
+  const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null } = {}) => {
+    const { agent } = await ensureMainSession({ sessionId, workspace, saveName })
+    const startedAt = Date.now()
+    // activation 的 assistant 文本同时写回主会话日志，保证 DSH 主会话里能看到完整对话。
+    appendUser(agent, prompt)
+    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent' })
+    appendAssistant(agent, result.text)
+    return { ...result, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
   }
 
   /**
@@ -272,45 +407,62 @@ export async function createHandler(ctx) {
     if (typeof ctx.subagents?.startActivation !== 'function') {
       throw new Error('这台 DSH 没有 subagents 服务')
     }
-    const owner = await ensureParent()
     const text = String(prompt || '')
     const finalPrompt = team ? TEAM_PREFIX + text : text
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), Math.max(30000, Number(timeoutMs) || 600000))
-    let activation = null
     const startedAt = Date.now()
-    try {
-      activation = await ctx.subagents.startActivation({
-        provider: 'spawn',
-        label: String(label).slice(0, 80),
-        request: {
-          prompt: [{ type: 'text', text: finalPrompt }],
-          parent: owner,
-        },
-        signal: controller.signal,
-        delivery: 'caller',
-      })
-      const result = await activation.result
-      const output = Array.isArray(result?.output) ? result.output : []
-      const body = output
-        .filter((block) => block && block.type === 'text')
-        .map((block) => block.text)
-        .join('')
-      return {
-        text: body,
-        usage: result?.usage || null,
-        ms: Date.now() - startedAt,
-        team,
-        label,
-      }
-    } finally {
-      clearTimeout(timer)
+    // 对象子会话：每个单位/事件一个固定的 worker session，后续复用，
+    // 不再每次 run 都 spawn 一个新的子会话。
+    let worker = null
+    const remembered = workers.get(label)
+    if (remembered?.sessionId) {
       try {
-        await activation?.dispose?.()
-      } catch {
-        /* 已结束 */
+        const sender = await ensureParent()
+        if (typeof ctx.subagents?.sendMessage !== 'function') throw new Error('DSH 没有 sendMessage')
+        await ctx.subagents.sendMessage(sender, remembered.sessionId, [{ type: 'text', text: finalPrompt }], {
+          signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
+        })
+        const child = ctx.agents?.get?.(remembered.sessionId) || (await ctx.agents.resume({ resumeSessionId: remembered.sessionId }))?.agent
+        if (!child) throw new Error('child session 无法 resume')
+        await child.whenIdle?.()
+        const messages = child.session?.deriveMessages?.() || []
+        const assistant = [...messages].reverse().find((message) => message?.role === 'assistant')
+        const text = messageText(assistant)
+        if (!text.trim()) throw new Error('child session 没有返回 assistant 文本')
+        return { text, usage: null, ms: Date.now() - startedAt, team, label, sessionId: remembered.sessionId, session: true, reused: true }
+      } catch (error) {
+        lastWorkerError = String(error?.message || error)
+        try {
+          await remembered.activation?.dispose?.()
+        } catch {
+          /* ignore */
+        }
+        workers.delete(label)
       }
     }
+    try {
+      const result = await runActivation(finalPrompt, {
+        label,
+        parent: mainAgent || (await ensureParent()),
+        timeoutMs,
+        keepActivation: true,
+      })
+      if (result.childId) workers.set(label, { key: label, sessionId: result.childId, activation: result.activation })
+      return {
+        ...result,
+        team,
+        label,
+        sessionId: result.childId || null,
+        session: true,
+        reused: false,
+      }
+    } catch (error) {
+      lastWorkerError = String(error?.message || error)
+      console.warn(`[stellaris-bridge] worker activation 失败，回退当前会话：${lastWorkerError}`)
+    }
+    const owner = await ensureParent()
+    const result = await runActivation(finalPrompt, { label, parent: owner, timeoutMs })
+    if (result.childId) workers.set(label, { key: label, sessionId: result.childId })
+    return { ...result, team, label, sessionId: result.childId || null, fallback: 'activation' }
   }
 
   return {
@@ -324,6 +476,7 @@ export async function createHandler(ctx) {
       label: '群星参谋主会话',
     }),
     dispose() {
+      disposeWorkers().catch(() => {})
       try {
         mainHandle?.dispose?.()
       } catch {

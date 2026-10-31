@@ -255,7 +255,23 @@ export class Orchestrator {
       }
     }
     const info = saveIdentity(state)
-    if (!force && this.main && this.mainSave?.key === info.key) return this.main
+    if (!force && this.main && this.mainSave?.key === info.key) {
+      // 同一存档改名/改政体名称：不换 session，只同步标题
+      if (info.name && info.name !== this.mainSave.name) {
+        this.mainSave.name = info.name
+        if (this.main.saveInfo) this.main.saveInfo.name = info.name
+        this.backend?.setMainSession?.({
+          sessionId: this.mainSave.sessionId,
+          saveKey: this.mainSave.key,
+          saveFolder: this.mainSave.folder,
+          saveName: info.name,
+          workspace: this.mainWorkspace || this.mainSave.workspace || null,
+        })
+        this.persistMain()
+        this.log('orchestrator.main.title.sync', { name: info.name, sessionId: this.mainSave.sessionId })
+      }
+      return this.main
+    }
     if (this.switchingSave) return this.main
     this.switchingSave = true
     try {
