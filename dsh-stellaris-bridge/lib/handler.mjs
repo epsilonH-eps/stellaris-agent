@@ -490,8 +490,7 @@ export async function createHandler(ctx) {
         child = null
       }
     }
-    if (!child) throw new Error('worker session 不是 live 状态')
-    const before = (child.session?.deriveMessages?.() || []).length
+    const before = (child?.session?.deriveMessages?.() || []).length
     if (typeof ctx.subagents?.sendMessage === 'function' && mainAgent) {
       await ctx.subagents.sendMessage(mainAgent, worker.sessionId, [{ type: 'text', text: String(prompt || '') }], {
         signal: AbortSignal.timeout(Math.max(30000, Number(timeoutMs) || 600000)),
@@ -508,6 +507,14 @@ export async function createHandler(ctx) {
     } else {
       throw new Error('DSH 没有可用的子会话消息接口')
     }
+    if (!child) {
+      const deadline = Date.now() + 10000
+      while (!child && Date.now() < deadline) {
+        child = typeof ctx.agents?.get === 'function' ? ctx.agents.get(worker.sessionId) : null
+        if (!child) await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+    }
+    if (!child) throw new Error('worker session 不是 live 状态')
     await child.whenIdle?.()
     const messages = child.session?.deriveMessages?.() || []
     const assistant = [...messages.slice(before)].reverse().find((message) => message?.role === 'assistant')
@@ -687,14 +694,39 @@ export async function createHandler(ctx) {
                 signal: AbortSignal.timeout(payload.timeoutMs || 120000),
               })
               sub.childId = cont.childId
-              const child = ctx.agents?.get?.(cont.childId) || (await ctx.agents.resume({ resumeSessionId: cont.childId }))?.agent
+              let child = null
+              const deadline = Date.now() + Math.min(30000, Number(payload.timeoutMs) || 30000)
+              while (!child && Date.now() < deadline) {
+                try {
+                  child = ctx.agents?.get?.(cont.childId) || null
+                } catch {
+                  child = null
+                }
+                if (!child) {
+                  try {
+                    child = (await ctx.agents.resume({ resumeSessionId: cont.childId, ...(mainAgent ? { parentAgent: mainAgent } : {}) }))?.agent || null
+                  } catch {
+                    child = null
+                  }
+                }
+                if (!child) await new Promise((resolve) => setTimeout(resolve, 300))
+              }
               await child?.whenIdle?.()
               const messages = child?.session?.deriveMessages?.() || []
               const assistant = [...messages].reverse().find((message) => message?.role === 'assistant')
               text = messageText(assistant)
+              if (!text) continuableError = 'CONTINUABLE_NO_OUTPUT'
+              if (typeof ctx.subagents?.drainContinuableChildren !== 'function') {
+                continuableError = 'NO_DRAIN_API'
+              } else {
+                try {
+                  await ctx.subagents.drainContinuableChildren(agent, [cont.childId])
+                } catch (error) {
+                  continuableError = `DRAIN_FAILED: ${String(error?.message || error)}`
+                }
+              }
             } catch (error) {
               continuableError = String(error?.message || error)
-              sub.childId = null
             }
           }
           if (!text) {
@@ -709,7 +741,7 @@ export async function createHandler(ctx) {
               keepActivation: true,
             })
             text = result.text
-            sub.childId = result.childId || null
+            if (!sub.childId) sub.childId = result.childId || null
             sub.activation = result.activation || null
           }
           if (!sub.archive && result?.childId) {
