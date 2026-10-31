@@ -167,6 +167,16 @@ export async function createHandler(ctx) {
     const desiredWorkspace = workspace || conversationCwd()
     const desiredTitle = saveName || '群星参谋 · 主会话'
     const desiredEffort = normalizeReasoningEffort(reasoningEffort || 'high')
+    if (!workspaceProject) {
+      try {
+        mkdirSync(desiredWorkspace, { recursive: true })
+        const registry = typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : null
+        workspaceProject = (await registry?.create?.(desiredWorkspace, '群星参谋')) || null
+        workspaceRegistered = Boolean(workspaceProject)
+      } catch {
+        workspaceProject = null
+      }
+    }
     if (mainAgent && (!sessionId || mainSessionId === sessionId) && mainWorkspace === desiredWorkspace) {
       if (mainTitle !== desiredTitle) {
         await renameMainTitle(mainAgent, desiredTitle)
@@ -472,7 +482,16 @@ export async function createHandler(ctx) {
   const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const { agent } = await ensureMainSession({ sessionId, workspace, saveName, reasoningEffort })
     const startedAt = Date.now()
-    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent', reasoningEffort: normalizeReasoningEffort(reasoningEffort || 'high') })
+    // 优先直接在主会话里 followup：这样 DSH 里只有一条主对话，
+    // 不会再为每次 tick 造一个“群星参谋主会话”子智能体。
+    try {
+      const text = await followupInSession(agent, prompt, timeoutMs)
+      return { text, usage: null, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
+    } catch (error) {
+      lastMainError = `followup: ${String(error?.message || error)}`
+      console.warn(`[stellaris-bridge] 主会话 followup 失败，回退 activation：${lastMainError}`)
+    }
+    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'caller', reasoningEffort: normalizeReasoningEffort(reasoningEffort || 'high') })
     return { ...result, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
   }
 
