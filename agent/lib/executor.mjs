@@ -97,6 +97,7 @@ export class Executor extends EventEmitter {
     this.jobs = []
     this.running = null
     this.draining = false
+    this.uiCloseTimer = null
     this.history = []
     this.pausedByUs = false
     this.lastPauseAt = 0
@@ -151,13 +152,15 @@ export class Executor extends EventEmitter {
 
   _scheduleUiClose() {
     if (!this.settings.uiAutoClose) return
+    if (this.uiCloseTimer) clearTimeout(this.uiCloseTimer)
     const seconds = this.settings.uiAutoCloseSeconds
-    const timer = setTimeout(() => {
+    this.uiCloseTimer = setTimeout(() => {
+      this.uiCloseTimer = null
       closeGameWindow({ processName: this.config?.ui?.processName || 'stellaris' })
         .then((result) => this.log('executor.ui.close', result))
         .catch((error) => this.log('executor.ui.close.failed', { error: String(error?.message || error) }))
     }, Math.max(0, seconds) * 1000)
-    timer.unref?.()
+    this.uiCloseTimer.unref?.()
   }
 
   /** 主会话/用户显式暂停。 */
@@ -402,6 +405,8 @@ export class Executor extends EventEmitter {
   stop() {
     this.stopped = true
     if (this.resumeTimer) clearTimeout(this.resumeTimer)
+    if (this.uiCloseTimer) clearTimeout(this.uiCloseTimer)
+    this.uiCloseTimer = null
     for (const job of this.jobs) job.resolve({ ok: false, error: 'EXECUTOR_STOPPED', actions: [] })
     this.jobs = []
   }

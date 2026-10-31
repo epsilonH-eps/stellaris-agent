@@ -80,26 +80,57 @@ export function closeGameWindow({ processName = 'stellaris', timeoutMs = 10000 }
   const script = `
 $ErrorActionPreference = 'SilentlyContinue'
 $p = Get-Process -Name '${safeName}' | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
-if (-not $p) { exit 0 }
+if (-not $p) { '{"ok":false,"reason":"no_window"}'; exit 0 }
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public static class StellarisUiNative {
-  [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 }
 "@
-[StellarisUiNative]::PostMessage($p.MainWindowHandle, 0x0100, [IntPtr]0x1B, [IntPtr]::Zero) | Out-Null
+$h = $p.MainWindowHandle
+[StellarisUiNative]::ShowWindow($h, 9) | Out-Null
+$fg = [StellarisUiNative]::GetForegroundWindow()
+if ($fg -ne $h) {
+  $ws = New-Object -ComObject WScript.Shell
+  $null = $ws.AppActivate($p.Id)
+  Start-Sleep -Milliseconds 300
+  $fg = [StellarisUiNative]::GetForegroundWindow()
+}
+if ($fg -ne $h) {
+  [StellarisUiNative]::SetForegroundWindow($h) | Out-Null
+  Start-Sleep -Milliseconds 250
+  $fg = [StellarisUiNative]::GetForegroundWindow()
+}
+if ($fg -ne $h) {
+  @{ ok = $false; reason = 'focus_failed'; pid = $p.Id; hwnd = [int64]$h } | ConvertTo-Json -Compress
+  exit 0
+}
+# 用系统级键盘事件，PostMessage 对 Stellaris 的输入循环通常无效
+[StellarisUiNative]::keybd_event([byte]0x1B, 0, 0, [UIntPtr]::Zero)
 Start-Sleep -Milliseconds 120
-[StellarisUiNative]::PostMessage($p.MainWindowHandle, 0x0101, [IntPtr]0x1B, [IntPtr]::Zero) | Out-Null
+[StellarisUiNative]::keybd_event([byte]0x1B, 0, 2, [UIntPtr]::Zero)
+@{ ok = $true; reason = 'esc_sent'; pid = $p.Id; hwnd = [int64]$h; foreground = $true } | ConvertTo-Json -Compress
 `
   return new Promise((resolve) => {
     execFile(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
       { windowsHide: true, timeout: timeoutMs },
-      (error) => {
-        if (error) resolve({ ok: false, error: String(error.message || error) })
-        else resolve({ ok: true })
+      (error, stdout) => {
+        if (error) {
+          resolve({ ok: false, error: String(error.message || error) })
+          return
+        }
+        try {
+          const line = String(stdout || '').trim().split(/\r?\n/).filter(Boolean).at(-1)
+          resolve(line ? JSON.parse(line) : { ok: false, reason: 'no_output' })
+        } catch {
+          resolve({ ok: false, reason: 'bad_output' })
+        }
       },
     )
   })
