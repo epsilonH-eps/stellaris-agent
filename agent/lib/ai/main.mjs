@@ -285,6 +285,7 @@ export class MainSession {
     this.ticking = true
     const startedAt = Date.now()
     try {
+      this.log('main.bridge.start', { reason })
       const world = this.getWorld()
       if (!world) return { ok: false, error: 'NO_WORLD', reason }
       const units = this.getUnits().map((unit) => ({
@@ -295,6 +296,7 @@ export class MainSession {
         actions: actionsForUnit(unit.type),
         context: unitContext(unit, world),
       }))
+      this.log('main.bridge.units', { count: units.length })
       const payload = {
         saveKey: this.saveInfo?.key || null,
         sessionId: this.saveInfo?.sessionId || this.dshSessionId || null,
@@ -308,7 +310,9 @@ export class MainSession {
         timeoutMs: this.config?.ai?.dsh?.timeoutMs || 600000,
         reasoningEffort: this.config?.ai?.main?.reasoningEffort || 'high',
       }
+      this.log('main.bridge.payload', { units: units.length, human: human.length })
       const result = await this.backend.bridgeTurn(payload)
+      this.log('main.bridge.received', { ok: result?.ok, actions: result?.actions?.length || 0 })
       let executed = null
       if (Array.isArray(result.actions) && result.actions.length) {
         executed = await this.executor.submit({ unit: 'main', source: 'dsh-bridge', actions: result.actions, meta: { reason } })

@@ -163,6 +163,7 @@ export class Orchestrator {
     this.executor.on('paused', (event) => this.chat?.outbound({ text: `${event.paused ? '已暂停' : '已恢复'}游戏（${event.reason}）`, id: 'system', kind: 'status' }))
 
     this.backend = backend || createBackend({ config: this.config, log: this.log })
+    this.bridgeMode = typeof this.backend?.bridgeTurn === 'function'
     this.backendInfo = backend
       ? { ok: true, backend: backend.name || 'injected', ...(backend.describe?.() || {}) }
       : await checkBackend(this.backend)
@@ -220,7 +221,7 @@ export class Orchestrator {
     })
 
     // 启动时把已激活事件当作特殊事件处理
-    if (this.config?.ai?.event?.processOnStart !== false) {
+    if (this.config?.ai?.event?.processOnStart !== false && !this.bridgeMode) {
       for (const event of world.activeEvents || []) {
         this.handleTrigger({ type: 'event_window', priority: 100, unit: 'event', payload: event, at: Date.now(), startup: true })
       }
@@ -623,6 +624,11 @@ export class Orchestrator {
   }
 
   enqueueEvent(trigger) {
+    if (this.bridgeMode) {
+      this.main?.observe?.(`事件：${JSON.stringify(trigger?.payload || trigger).slice(0, 800)}`)
+      this.scheduleMain('event', 1000)
+      return
+    }
     if (this.eventQueue.length >= 30) this.eventQueue.shift()
     this.eventQueue.push(trigger)
     this.drainEvents().catch((error) => this.log('orchestrator.events.drain', { error: String(error?.message || error) }))

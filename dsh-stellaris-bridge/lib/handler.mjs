@@ -480,6 +480,7 @@ export async function createHandler(ctx) {
   }
 
   const bridgeStates = new Map()
+  const bridgeInFlight = new Set()
 
   function bridgeState(saveKey) {
     const key = String(saveKey || 'default')
@@ -498,6 +499,24 @@ export async function createHandler(ctx) {
   }
 
   async function runBridgeTurn(payload = {}) {
+    const key = String(payload.saveKey || payload.polityName || 'default')
+    if (bridgeInFlight.has(key)) {
+      return { ok: false, busy: true, error: 'BRIDGE_BUSY', sessionId: mainSessionId || null }
+    }
+    bridgeInFlight.add(key)
+    try {
+      return await runBridgeTurnInner(payload)
+    } catch (error) {
+      if (String(error?.message || '').includes('BRIDGE_MAIN_TIMEOUT')) {
+        return { ok: false, busy: true, error: 'BRIDGE_MAIN_TIMEOUT', sessionId: mainSessionId || null }
+      }
+      throw error
+    } finally {
+      bridgeInFlight.delete(key)
+    }
+  }
+
+  async function runBridgeTurnInner(payload = {}) {
     const ws = payload.workspace || conversationCwd()
     const saveName = payload.polityName || payload.saveName || '群星参谋'
     const sessionId = payload.sessionId || `stellaris-main-${payload.saveKey || 'default'}`
@@ -518,7 +537,7 @@ export async function createHandler(ctx) {
     }
     lines.push(`【本轮原因】${payload.reason || 'turn'}`)
     lines.push(`【可用对象】${JSON.stringify(units.map((u) => ({ id: u.id, type: u.type, name: u.name, goal: u.goal || null }))).slice(0, 12000)}`)
-    lines.push(`【新的世界信息】${JSON.stringify(payload.world).slice(0, 30000)}`)
+    lines.push(`【新的世界信息】${JSON.stringify(payload.world).slice(0, 12000)}`)
     if (state.memory.length) lines.push(`【上一轮记忆】${JSON.stringify(state.memory.slice(-6)).slice(0, 8000)}`)
     if (human.length) lines.push(`【人类输入】${JSON.stringify(human).slice(0, 8000)}`)
     lines.push(`【输出要求】只输出一个 JSON：
@@ -530,13 +549,23 @@ export async function createHandler(ctx) {
   "dispatches": [{"target":"fleet:1","instruction":"用人话下命令"}],
   "actions": [{"method":"...","params":{}}]
 }
-已有目标必须复用；不要重复初始化；不要输出旧提示词。`)
-    const result = await runActivation(lines.join('\n\n'), {
-      label: '群星参谋主会话',
-      parent: agent,
-      timeoutMs: payload.timeoutMs || 600000,
-      delivery: 'caller',
-      reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
+已有目标必须复用；不要重复初始化；不要输出旧提示词。
+禁止调用任何工具，不要读文件、不要浏览、不要执行命令；只根据本轮给的信息直接输出 JSON。`)
+    const mainTimeoutMs = Math.min(Number(payload.timeoutMs) || 120000, 120000)
+    let timer = null
+    const result = await Promise.race([
+      runActivation(lines.join('\n\n'), {
+        label: '群星参谋主会话',
+        parent: agent,
+        timeoutMs: mainTimeoutMs,
+        delivery: 'caller',
+        reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('BRIDGE_MAIN_TIMEOUT')), mainTimeoutMs)
+      }),
+    ]).finally(() => {
+      if (timer) clearTimeout(timer)
     })
     const decision = parseJsonReply(result.text) || { say: String(result.text || '').slice(0, 2000), actions: [], dispatches: [] }
     // 只接受子会话翻译出的动作；主会话的 actions 不作为直接执行来源，
