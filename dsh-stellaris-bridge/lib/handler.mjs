@@ -472,10 +472,7 @@ export async function createHandler(ctx) {
   const runMainSession = async (prompt, { timeoutMs = 600000, sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const { agent } = await ensureMainSession({ sessionId, workspace, saveName, reasoningEffort })
     const startedAt = Date.now()
-    // activation 的 assistant 文本同时写回主会话日志，保证 DSH 主会话里能看到完整对话。
-    appendUser(agent, prompt)
     const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent', reasoningEffort: normalizeReasoningEffort(reasoningEffort || 'high') })
-    appendAssistant(agent, result.text)
     return { ...result, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
   }
 
