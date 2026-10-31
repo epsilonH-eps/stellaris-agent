@@ -81,7 +81,7 @@
 ### 用 EXE
 
 1. 启动群星并**读档或新开一局**；
-2. 双击 `StellarisAgent.exe`；
+2. 双击 `StellarisAgent.exe`（EXE 清单已设为 `requireAdministrator`，Windows 会弹一次 UAC，确认后以管理员权限运行；这是注入游戏/读存档目录需要的权限）；
 3. 选择主控：DeepSeek API 或 DSH 插件；
 4. 进主窗口 →「启动并读取」。
 

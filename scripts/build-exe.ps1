@@ -65,5 +65,5 @@ Write-Host "使用 ps2exe：$moduleDir"
 Import-Module $moduleDir -Force
 $input = Join-Path $root 'agent\gui\StellarisAgent.ps1'
 $output = Join-Path $root 'StellarisAgent.exe'
-Invoke-PS2EXE -InputFile $input -OutputFile $output -NoConsole -STA -Title '群星参谋' -Product 'Stellaris Agent' -Version $Version
+Invoke-PS2EXE -InputFile $input -OutputFile $output -NoConsole -STA -RequireAdmin -Title '群星参谋' -Product 'Stellaris Agent' -Version $Version
 Write-Host "已生成：$output"
