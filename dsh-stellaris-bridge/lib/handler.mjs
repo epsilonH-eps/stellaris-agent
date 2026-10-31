@@ -664,110 +664,42 @@ export async function createHandler(ctx) {
       try {
         let sub = state.subagents.get(target)
         if (!sub) {
-          sub = { initialized: false, queue: Promise.resolve(), archive: null }
+          const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\logical-${workerSessionId(target)}`
+          try {
+            mkdirSync(dir, { recursive: true })
+            const init = `你是对象 ${target} 的逻辑子会话。\n职责：把主会话的人话翻译成动作。\n可用动作：${JSON.stringify(unit.actions || []).slice(0, 20000)}\n上下文：${JSON.stringify(unit.context || {}).slice(0, 20000)}\n只输出 JSON：{"actions":[{"method":"...","params":{}}]}`
+            writeFileSync(`${dir}\\init.md`, init, 'utf8')
+          } catch { /* ignore */ }
+          sub = { initialized: false, queue: Promise.resolve(), archive: dir, memory: [] }
           state.subagents.set(target, sub)
         }
         const run = sub.queue.then(async () => {
-          let text = null
-          let result = null
-          let didReuse = false
-          let reuseError = null
-          let continuableError = null
-          if (sub.childId) {
-            try {
-              text = await sendToWorker({ sessionId: sub.childId }, `${instruction}\n只输出 JSON {"actions":[...]}`, payload.timeoutMs || 600000)
-              didReuse = true
-            } catch (error) {
-              reuseError = [
-                error?.code || '',
-                String(error?.message || error),
-                error?.cause?.code || '',
-                String(error?.cause?.message || ''),
-              ].filter(Boolean).join(' | ')
-              sub.childId = null
-            }
-          }
-          if (!text && typeof ctx.subagents?.startContinuable === 'function') {
-            try {
-              const initPrompt = sub.initialized ? '' : `【初始化】${JSON.stringify(unit.actions || [])}\n`
-              const cont = await ctx.subagents.startContinuable({
-                provider: 'spawn',
-                label: target,
-                request: {
-                  prompt: [{ type: 'text', text: `${initPrompt}${instruction}\n只输出 JSON {"actions":[...]}` }],
-                  parent: agent,
-                  agentOptions: { reasoningEffort: 'low' },
-                },
-                signal: AbortSignal.timeout(payload.timeoutMs || 120000),
-              })
-              sub.childId = cont.childId
-              let child = null
-              const deadline = Date.now() + Math.min(30000, Number(payload.timeoutMs) || 30000)
-              while (!child && Date.now() < deadline) {
-                try {
-                  child = ctx.agents?.get?.(cont.childId) || null
-                } catch {
-                  child = null
-                }
-                if (!child) {
-                  try {
-                    child = (await ctx.agents.resume({ resumeSessionId: cont.childId, ...(mainAgent ? { parentAgent: mainAgent } : {}) }))?.agent || null
-                  } catch {
-                    child = null
-                  }
-                }
-                if (!child) await new Promise((resolve) => setTimeout(resolve, 300))
-              }
-              await child?.whenIdle?.()
-              const messages = child?.session?.deriveMessages?.() || []
-              const assistant = [...messages].reverse().find((message) => message?.role === 'assistant')
-              text = messageText(assistant)
-              if (!text) continuableError = 'CONTINUABLE_NO_OUTPUT'
-              if (typeof ctx.subagents?.drainContinuableChildren !== 'function') {
-                continuableError = 'NO_DRAIN_API'
-              } else {
-                try {
-                  await ctx.subagents.drainContinuableChildren(agent, [cont.childId])
-                } catch (error) {
-                  continuableError = `DRAIN_FAILED: ${String(error?.message || error)}`
-                }
-              }
-            } catch (error) {
-              continuableError = String(error?.message || error)
-            }
-          }
-          if (!text) {
-            const initPrompt = sub.initialized ? '' : `【初始化】${JSON.stringify(unit.actions || [])}\n`
-            result = await runActivation(`${initPrompt}${instruction}\n只输出 JSON {"actions":[...]}`, {
-              label: target,
-              parent: agent,
-              timeoutMs: payload.timeoutMs || 600000,
-              delivery: 'parent',
-              reasoningEffort: sub.initialized ? 'off' : 'low',
-              agentPreset: 'minimal',
-              keepActivation: true,
-            })
-            text = result.text
-            if (!sub.childId) sub.childId = result.childId || null
-            sub.activation = result.activation || null
-          }
-          if (!sub.archive && result?.childId) {
-            const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\${result.childId}`
-            try {
-              mkdirSync(dir, { recursive: true })
-              const init = `你是对象 ${target} 的操作子会话。\n职责：把主会话的人话翻译成动作。\n可用动作：${JSON.stringify(unit.actions || []).slice(0, 20000)}\n上下文：${JSON.stringify(unit.context || {}).slice(0, 20000)}\n只输出 JSON：{"actions":[{"method":"...","params":{}}]}`
-              writeFileSync(`${dir}\\init.md`, init, 'utf8')
-              sub.archive = dir
-            } catch { /* ignore */ }
-          }
+          const history = sub.memory.slice(-4)
+          const context = history.length
+            ? `【对象历史】${JSON.stringify(history).slice(0, 12000)}\n`
+            : `【对象初始化】${JSON.stringify({ actions: unit.actions || [], context: unit.context || {} }).slice(0, 16000)}\n`
+          const result = await runActivation(`${context}${instruction}\n只输出 JSON {"actions":[...]}`, {
+            label: target,
+            parent: agent,
+            timeoutMs: payload.timeoutMs || 600000,
+            delivery: 'parent',
+            reasoningEffort: sub.initialized ? 'off' : 'low',
+            agentPreset: 'minimal',
+          })
+          const childDecision = parseJsonReply(result.text) || { actions: [] }
+          const childActions = Array.isArray(childDecision.actions) ? childDecision.actions : []
+          sub.memory.push({ at: Date.now(), instruction, text: String(result.text || '').slice(0, 4000), actions: childActions })
+          if (sub.memory.length > 20) sub.memory = sub.memory.slice(-20)
           sub.initialized = true
-          const childDecision = parseJsonReply(text) || { actions: [] }
-          return { actions: Array.isArray(childDecision.actions) ? childDecision.actions : [], reused: didReuse, reuseError, continuableError }
+          try {
+            writeFileSync(`${sub.archive}\\history.json`, JSON.stringify(sub.memory.slice(-8), null, 2), 'utf8')
+          } catch { /* ignore */ }
+          return { actions: childActions, reused: history.length > 0 }
         })
         sub.queue = run.catch(() => ({ actions: [], reused: false }))
         const outcome = await run
         actions.push(...outcome.actions)
-        reports.push({ target, ok: true, actions: outcome.actions.length, reused: outcome.reused, reuseError: outcome.reuseError || null, continuableError: outcome.continuableError || null, childId: sub.childId || null })
+        reports.push({ target, ok: true, actions: outcome.actions.length, reused: outcome.reused, logicalReuse: true, archive: sub.archive })
       } catch (error) {
         reports.push({ target, ok: false, error: String(error?.message || error) })
       }
