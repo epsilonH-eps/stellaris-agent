@@ -21,6 +21,20 @@ const TEAM_PREFIX = [
 ].join('\n')
 
 const DSH_MODEL = 'deepseek-flash' // DSH 里显示为 DeepSeek V4.1 Flash
+// deepseek-flash 不支持 medium/minimal，映射到它支持的高档
+function normalizeReasoningEffort(value) {
+  const effort = String(value || '').toLowerCase()
+  if (effort === 'off' || effort === 'low' || effort === 'high' || effort === 'max') return effort
+  if (effort === 'minimal') return 'low'
+  return 'high'
+}
+
+function workerKey(label) {
+  const text = String(label || 'worker')
+  // 事件窗口 id 每次都不同；它们共用一个事件 worker，避免每次事件新建子智能体
+  if (/^unit:event:/.test(text)) return 'unit:event'
+  return text
+}
 
 function conversationCwd() {
   return process.env.STELLARIS_DSH_CWD || process.cwd()
@@ -152,6 +166,7 @@ export async function createHandler(ctx) {
   const ensureMainSession = async ({ sessionId = null, workspace = null, saveName = null, reasoningEffort = null } = {}) => {
     const desiredWorkspace = workspace || conversationCwd()
     const desiredTitle = saveName || '群星参谋 · 主会话'
+    const desiredEffort = normalizeReasoningEffort(reasoningEffort || 'high')
     if (mainAgent && (!sessionId || mainSessionId === sessionId) && mainWorkspace === desiredWorkspace) {
       if (mainTitle !== desiredTitle) {
         await renameMainTitle(mainAgent, desiredTitle)
@@ -195,13 +210,12 @@ export async function createHandler(ctx) {
       const selection = defaultModelService()?.currentSelection?.()
       if (selection?.provider && selection?.model) {
         agentOptions = { provider: selection.provider, model: DSH_MODEL }
-        if (reasoningEffort) agentOptions.reasoningEffort = String(reasoningEffort)
-        else if (selection.reasoningEffort) agentOptions.reasoningEffort = selection.reasoningEffort
-      } else if (reasoningEffort) {
-        agentOptions = { provider: 'deepseek-official', model: DSH_MODEL, reasoningEffort: String(reasoningEffort) }
+        agentOptions.reasoningEffort = desiredEffort
+      } else if (desiredEffort) {
+        agentOptions = { provider: 'deepseek-official', model: DSH_MODEL, reasoningEffort: desiredEffort }
       }
     } catch {
-      agentOptions = reasoningEffort ? { reasoningEffort: String(reasoningEffort) } : null
+      agentOptions = { provider: 'deepseek-official', model: DSH_MODEL, reasoningEffort: desiredEffort }
     }
     if (!agentOptions) {
       try {
@@ -377,7 +391,7 @@ export async function createHandler(ctx) {
   }
 
   async function ensureWorkerSession(label) {
-    const key = String(label || 'worker')
+    const key = workerKey(label)
     const workspace = mainWorkspace || conversationCwd()
     const cached = workers.get(key)
     if (cached?.agent && cached.workspace === workspace) return cached
@@ -460,7 +474,7 @@ export async function createHandler(ctx) {
     const startedAt = Date.now()
     // activation 的 assistant 文本同时写回主会话日志，保证 DSH 主会话里能看到完整对话。
     appendUser(agent, prompt)
-    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent', reasoningEffort })
+    const result = await runActivation(prompt, { label: '群星参谋主会话', parent: agent, timeoutMs, delivery: 'parent', reasoningEffort: normalizeReasoningEffort(reasoningEffort || 'high') })
     appendAssistant(agent, result.text)
     return { ...result, ms: Date.now() - startedAt, sessionId: mainSessionId, session: true, reused: true }
   }
@@ -501,7 +515,8 @@ export async function createHandler(ctx) {
     // 对象子会话：每个单位/事件一个固定的 worker session，后续复用，
     // 不再每次 run 都 spawn 一个新的子会话。
     let worker = null
-    const remembered = workers.get(label)
+    const key = workerKey(label)
+    const remembered = workers.get(key)
     if (remembered?.sessionId) {
       try {
         const body = await sendToWorker(remembered, finalPrompt, timeoutMs)
@@ -522,7 +537,7 @@ export async function createHandler(ctx) {
         } catch {
           /* ignore */
         }
-        workers.delete(label)
+        workers.delete(key)
       }
     }
     try {
@@ -533,7 +548,7 @@ export async function createHandler(ctx) {
         keepActivation: true,
         reasoningEffort: 'off',
       })
-      if (result.childId) workers.set(label, { key: label, sessionId: result.childId, activation: result.activation })
+      if (result.childId) workers.set(key, { key, sessionId: result.childId, activation: result.activation })
       return {
         ...result,
         team,

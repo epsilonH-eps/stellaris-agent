@@ -333,7 +333,7 @@ $mainPanel.Controls.Add($mainEffortLabel)
 $mainEffort = New-Object System.Windows.Forms.ComboBox
 $mainEffort.SetBounds(590, 7, 100, 26)
 $mainEffort.DropDownStyle = 'DropDownList'
-foreach ($level in @('off', 'low', 'medium', 'high')) { [void]$mainEffort.Items.Add($level) }
+foreach ($level in @('off', 'low', 'high', 'max')) { [void]$mainEffort.Items.Add($level) }
 $mainPanel.Controls.Add($mainEffort)
 
 # ---------------------------------------------------------------- 子会话
@@ -1079,7 +1079,7 @@ function Load-Settings {
     $setAttempts.Text = [string]$c.executor.maxAttempts
     $setMainInterval.Text = [string]$c.ai.main.intervalSeconds
     $mainEffort.SelectedItem = [string]$c.ai.main.reasoningEffort
-    if ($null -eq $mainEffort.SelectedItem) { $mainEffort.SelectedItem = 'medium' }
+    if ($null -eq $mainEffort.SelectedItem) { $mainEffort.SelectedItem = 'high' }
     $setWatch.Text = [string]$c.bridge.watchSeconds
     $setAutoInject.Checked = [bool]$c.bridge.autoInject
     $setAutoStart.Checked = [bool]$c.bridge.autoStartOrchestrator
@@ -1453,3 +1453,4 @@ $form.Add_FormClosed({
 })
 
 [void]$form.ShowDialog()
+

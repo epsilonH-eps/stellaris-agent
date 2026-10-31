@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 配置：单一数据源（DEFAULT_CONFIG），`config.json` 只存覆盖项。
  *
  * 位置：`~/.stellaris-agent/config.json`，可用 STELLARIS_AGENT_HOME 改目录。
@@ -83,7 +83,7 @@ export const DEFAULT_CONFIG = {
       autoDiscover: true,
       timeoutMs: 600000,
     },
-    main: { intervalSeconds: 120, maxActionsPerTurn: 8, historyMessages: 24, activateOnStart: true, reasoningEffort: 'medium' },
+    main: { intervalSeconds: 120, maxActionsPerTurn: 8, historyMessages: 24, activateOnStart: true, reasoningEffort: 'high' },
     unit: { intervalSeconds: 45, maxActionsPerTurn: 4, attempts: 3, historyMessages: 18, maxConcurrent: 5 },
     event: { maxActionsPerTurn: 3, attempts: 2, historyMessages: 12 },
   },
@@ -249,3 +249,4 @@ export function requireApiKey(config) {
 export function backendOf(config) {
   return String(config?.ai?.backend || 'deepseek').toLowerCase() === 'dsh' ? 'dsh' : 'deepseek'
 }
+
