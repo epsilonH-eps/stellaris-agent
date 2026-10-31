@@ -539,7 +539,9 @@ export async function createHandler(ctx) {
       reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
     })
     const decision = parseJsonReply(result.text) || { say: String(result.text || '').slice(0, 2000), actions: [], dispatches: [] }
-    const actions = Array.isArray(decision.actions) ? [...decision.actions] : []
+    // 只接受子会话翻译出的动作；主会话的 actions 不作为直接执行来源，
+    // 避免出现 fleet.move 这类非执行器方法。
+    const actions = []
     const reports = []
     for (const dispatch of Array.isArray(decision.dispatches) ? decision.dispatches : []) {
       const target = String(dispatch.target || '').trim()
@@ -547,21 +549,31 @@ export async function createHandler(ctx) {
       if (!target || !instruction) continue
       const unit = units.find((u) => u.id === target || u.type === target) || { id: target, type: target }
       try {
-        const worker = await ensureWorkerSession(target)
         let sub = state.subagents.get(target)
         if (!sub) {
-          const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\${worker.sessionId}`
-          try {
-            mkdirSync(dir, { recursive: true })
-            const init = `你是对象 ${target} 的操作子会话。\n职责：把主会话的人话翻译成动作。\n可用动作：${JSON.stringify(unit.actions || []).slice(0, 20000)}\n上下文：${JSON.stringify(unit.context || {}).slice(0, 20000)}\n只输出 JSON：{"actions":[{"method":"...","params":{}}]}`
-            writeFileSync(`${dir}\\init.md`, init, 'utf8')
-          } catch { /* ignore */ }
-          sub = { initialized: true, queue: Promise.resolve() }
+          sub = { initialized: false, queue: Promise.resolve(), archive: null }
           state.subagents.set(target, sub)
         }
         const run = sub.queue.then(async () => {
-          const text = await sendToWorker(worker, `${instruction}\n只输出 JSON {"actions":[...]}`, payload.timeoutMs || 600000)
-          const childDecision = parseJsonReply(text) || { actions: [] }
+          const initPrompt = sub.initialized ? '' : `【初始化】${JSON.stringify(unit.actions || [])}\n`
+          const result = await runActivation(`${initPrompt}${instruction}\n只输出 JSON {"actions":[...]}`, {
+            label: target,
+            parent: agent,
+            timeoutMs: payload.timeoutMs || 600000,
+            delivery: 'parent',
+            reasoningEffort: sub.initialized ? 'off' : 'low',
+          })
+          if (!sub.archive && result.childId) {
+            const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\${result.childId}`
+            try {
+              mkdirSync(dir, { recursive: true })
+              const init = `你是对象 ${target} 的操作子会话。\n职责：把主会话的人话翻译成动作。\n可用动作：${JSON.stringify(unit.actions || []).slice(0, 20000)}\n上下文：${JSON.stringify(unit.context || {}).slice(0, 20000)}\n只输出 JSON：{"actions":[{"method":"...","params":{}}]}`
+              writeFileSync(`${dir}\\init.md`, init, 'utf8')
+              sub.archive = dir
+            } catch { /* ignore */ }
+          }
+          sub.initialized = true
+          const childDecision = parseJsonReply(result.text) || { actions: [] }
           return Array.isArray(childDecision.actions) ? childDecision.actions : []
         })
         sub.queue = run.catch(() => [])
