@@ -105,7 +105,8 @@ export function saveIdentity(state) {
   const file = resolveSaveFile(state)
   const meta = state?.meta || (latest && typeof latest === 'object' ? latest.meta : null) || {}
   const folder = file ? basename(dirname(file)) : ''
-  const seed = folder || file || 'unknown'
+  // v2：旧会话曾因合成事件损坏，换一代 key 让新主会话使用干净 session
+  const seed = `${folder || file || 'unknown'}|v2`
   const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
   return {
     key,

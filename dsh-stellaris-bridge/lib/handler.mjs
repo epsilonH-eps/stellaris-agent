@@ -559,9 +559,9 @@ export async function createHandler(ctx) {
     try {
       const result = await runActivation(finalPrompt, {
         label,
-        parent: await ensureParent(),
+        parent: mainAgent || (await ensureParent()),
         timeoutMs,
-        keepActivation: true,
+        delivery: mainAgent ? 'parent' : 'caller',
         reasoningEffort: 'off',
       })
       if (result.childId) workers.set(key, { key, sessionId: result.childId, activation: result.activation })
