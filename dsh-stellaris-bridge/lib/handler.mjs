@@ -633,16 +633,33 @@ export async function createHandler(ctx) {
           state.subagents.set(target, sub)
         }
         const run = sub.queue.then(async () => {
-          const initPrompt = sub.initialized ? '' : `【初始化】${JSON.stringify(unit.actions || [])}\n`
-          const result = await runActivation(`${initPrompt}${instruction}\n只输出 JSON {"actions":[...]}`, {
-            label: target,
-            parent: agent,
-            timeoutMs: payload.timeoutMs || 600000,
-            delivery: 'parent',
-            reasoningEffort: sub.initialized ? 'off' : 'low',
-            agentPreset: 'minimal',
-          })
-          if (!sub.archive && result.childId) {
+          let text = null
+          let result = null
+          let didReuse = false
+          if (sub.childId) {
+            try {
+              text = await sendToWorker({ sessionId: sub.childId }, `${instruction}\n只输出 JSON {"actions":[...]}`, payload.timeoutMs || 600000)
+              didReuse = true
+            } catch {
+              sub.childId = null
+            }
+          }
+          if (!text) {
+            const initPrompt = sub.initialized ? '' : `【初始化】${JSON.stringify(unit.actions || [])}\n`
+            result = await runActivation(`${initPrompt}${instruction}\n只输出 JSON {"actions":[...]}`, {
+              label: target,
+              parent: agent,
+              timeoutMs: payload.timeoutMs || 600000,
+              delivery: 'parent',
+              reasoningEffort: sub.initialized ? 'off' : 'low',
+              agentPreset: 'minimal',
+              keepActivation: true,
+            })
+            text = result.text
+            sub.childId = result.childId || null
+            sub.activation = result.activation || null
+          }
+          if (!sub.archive && result?.childId) {
             const dir = `${process.env.USERPROFILE || process.cwd()}\\.stellaris-agent\\subagents\\${result.childId}`
             try {
               mkdirSync(dir, { recursive: true })
@@ -652,13 +669,13 @@ export async function createHandler(ctx) {
             } catch { /* ignore */ }
           }
           sub.initialized = true
-          const childDecision = parseJsonReply(result.text) || { actions: [] }
-          return Array.isArray(childDecision.actions) ? childDecision.actions : []
+          const childDecision = parseJsonReply(text) || { actions: [] }
+          return { actions: Array.isArray(childDecision.actions) ? childDecision.actions : [], reused: didReuse }
         })
-        sub.queue = run.catch(() => [])
-        const childActions = await run
-        actions.push(...childActions)
-        reports.push({ target, ok: true, actions: childActions.length })
+        sub.queue = run.catch(() => ({ actions: [], reused: false }))
+        const outcome = await run
+        actions.push(...outcome.actions)
+        reports.push({ target, ok: true, actions: outcome.actions.length, reused: outcome.reused, childId: sub.childId || null })
       } catch (error) {
         reports.push({ target, ok: false, error: String(error?.message || error) })
       }

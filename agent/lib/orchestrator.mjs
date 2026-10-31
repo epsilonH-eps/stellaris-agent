@@ -500,6 +500,12 @@ export class Orchestrator {
    * @returns {Promise<object>} 子会话报告
    */
   async dispatch(unitId, goal = '', { reason = 'main', force = false } = {}) {
+    if (this.bridgeMode) {
+      // 软件只中转：单位调度由 DSH 主会话负责，应用不再拉起自己的 unit AI。
+      this.main?.observe?.(`对象 ${unitId} 的调度交给 DSH 主会话：${String(goal).slice(0, 500)}`)
+      this.scheduleMain(reason || 'bridge-dispatch', 1000)
+      return { ok: false, status: 'bridge-managed', unit: unitId }
+    }
     const session = this.units.get(unitId)
     if (!session) return { ok: false, status: 'error', unit: unitId, error: 'UNKNOWN_UNIT' }
     if (!this.backendInfo?.ok) return { ok: false, status: 'error', unit: unitId, error: 'AI_UNAVAILABLE', detail: this.backendInfo?.error }
