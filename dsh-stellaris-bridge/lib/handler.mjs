@@ -262,22 +262,35 @@ export async function createHandler(ctx) {
       }
     }
     if (!mainAgent) {
-      try {
-        mainHandle = await ctx.agents.create({
-          sessionId: mainSessionId,
-          meta: { cwd: desiredWorkspace, title: desiredTitle },
-          agentPreset: 'minimal',
-          ...(agentOptions ? { agentOptions } : {}),
-        })
-        mainAgent = mainHandle?.agent || mainHandle
-      } catch (error) {
-        // create 报 already exists 时再取一次 live agent
+      const controller = typeof ctx.get === 'function' ? ctx.get('sessionController') : null
+      if (controller?.create) {
+        await controller.create({ sessionId: mainSessionId, cwd: desiredWorkspace, agentPreset: 'minimal' })
         try {
           mainAgent = typeof ctx.agents?.get === 'function' ? ctx.agents.get(mainSessionId) : null
         } catch {
           mainAgent = null
         }
-        if (!mainAgent) throw error
+        if (!mainAgent && typeof ctx.agents?.resume === 'function') {
+          mainHandle = await ctx.agents.resume({ resumeSessionId: mainSessionId })
+          mainAgent = mainHandle?.agent || mainHandle
+        }
+      } else {
+        try {
+          mainHandle = await ctx.agents.create({
+            sessionId: mainSessionId,
+            meta: { cwd: desiredWorkspace, title: desiredTitle },
+            agentPreset: 'minimal',
+            ...(agentOptions ? { agentOptions } : {}),
+          })
+          mainAgent = mainHandle?.agent || mainHandle
+        } catch (error) {
+          try {
+            mainAgent = typeof ctx.agents?.get === 'function' ? ctx.agents.get(mainSessionId) : null
+          } catch {
+            mainAgent = null
+          }
+          if (!mainAgent) throw error
+        }
       }
     }
     if (!mainAgent || typeof mainAgent.followup !== 'function') throw new Error('agents.create 没有返回可用的 Agent')
@@ -501,6 +514,28 @@ export async function createHandler(ctx) {
     try { return JSON.parse(candidate.slice(start, end + 1)) } catch { return null }
   }
 
+  async function promptControllerMain(agent, text, timeoutMs = 120000) {
+    const controller = typeof ctx.get === 'function' ? ctx.get('sessionController') : null
+    if (!controller?.prompt) return null
+    const before = (agent?.session?.deriveMessages?.() || []).length
+    await controller.prompt({
+      sessionId: mainSessionId,
+      requestId: randomUUID(),
+      content: [{ type: 'text', text: String(text || '') }],
+    })
+    await Promise.race([
+      Promise.resolve(agent?.whenIdle?.()),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('BRIDGE_MAIN_TIMEOUT')), timeoutMs)),
+    ])
+    const messages = agent?.session?.deriveMessages?.() || []
+    const assistant = [...messages.slice(before)].reverse().find((message) => message?.role === 'assistant')
+    const result = Array.isArray(assistant?.content)
+      ? assistant.content.filter((part) => part?.type === 'text').map((part) => part.text).join('')
+      : ''
+    if (!result.trim()) throw new Error('BRIDGE_NO_ASSISTANT')
+    return result
+  }
+
   async function runBridgeTurn(payload = {}) {
     const key = String(payload.saveKey || payload.polityName || 'default')
     if (bridgeInFlight.has(key)) {
@@ -555,31 +590,41 @@ export async function createHandler(ctx) {
 已有目标必须复用；不要重复初始化；不要输出旧提示词。
 禁止调用任何工具，不要读文件、不要浏览、不要执行命令；只根据本轮给的信息直接输出 JSON。`)
     const mainTimeoutMs = Math.min(Number(payload.timeoutMs) || 120000, 120000)
-    let timer = null
-    const result = await Promise.race([
-      runActivation(lines.join('\n\n'), {
-        label: '群星参谋主会话',
-        parent: agent,
-        timeoutMs: mainTimeoutMs,
-        delivery: 'caller',
-        reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
-        agentPreset: 'minimal',
-      }),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('BRIDGE_MAIN_TIMEOUT')), mainTimeoutMs)
-      }),
-    ]).finally(() => {
-      if (timer) clearTimeout(timer)
-    })
+    const prompt = lines.join('\n\n')
+    let result = null
+    // sessionController.prompt 在复杂世界下会挂起；桥接主推理统一走
+    // minimal preset 的一次性 activation，保证无工具且可超时。
+    if (false) {
+      const text = await promptControllerMain(agent, prompt, mainTimeoutMs)
+      if (text) result = { text, ms: 0 }
+    }
+    if (!result) {
+      let timer = null
+      result = await Promise.race([
+        runActivation(prompt, {
+          label: '群星参谋主会话',
+          parent: agent,
+          timeoutMs: mainTimeoutMs,
+          delivery: 'caller',
+          reasoningEffort: normalizeReasoningEffort(payload.reasoningEffort || 'high'),
+          agentPreset: 'minimal',
+        }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('BRIDGE_MAIN_TIMEOUT')), mainTimeoutMs)
+        }),
+      ]).finally(() => {
+        if (timer) clearTimeout(timer)
+      })
+    }
     const decision = parseJsonReply(result.text) || { say: String(result.text || '').slice(0, 2000), actions: [], dispatches: [] }
     // 只接受子会话翻译出的动作；主会话的 actions 不作为直接执行来源，
     // 避免出现 fleet.move 这类非执行器方法。
     const actions = []
     const reports = []
-    for (const dispatch of Array.isArray(decision.dispatches) ? decision.dispatches : []) {
+    await Promise.all((Array.isArray(decision.dispatches) ? decision.dispatches : []).map(async (dispatch) => {
       const target = String(dispatch.target || '').trim()
       const instruction = String(dispatch.instruction || '').trim()
-      if (!target || !instruction) continue
+      if (!target || !instruction) return
       const unit = units.find((u) => u.id === target || u.type === target) || { id: target, type: target }
       try {
         let sub = state.subagents.get(target)
@@ -617,7 +662,7 @@ export async function createHandler(ctx) {
       } catch (error) {
         reports.push({ target, ok: false, error: String(error?.message || error) })
       }
-    }
+    }))
     state.memory.push({ at: Date.now(), say: decision.say || '', audience: decision.audience || '', actions: actions.length })
     if (state.memory.length > 20) state.memory = state.memory.slice(-20)
     return {

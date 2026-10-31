@@ -105,8 +105,8 @@ export function saveIdentity(state) {
   const file = resolveSaveFile(state)
   const meta = state?.meta || (latest && typeof latest === 'object' ? latest.meta : null) || {}
   const folder = file ? basename(dirname(file)) : ''
-  // v9：主会话必须用 minimal preset 创建，才能不带工具
-  const seed = `${folder || file || 'unknown'}|v9`
+  // v11：sessionController 主会话 + 并行子会话调度
+  const seed = `${folder || file || 'unknown'}|v11`
   const key = createHash('sha1').update(seed).digest('hex').slice(0, 16)
   return {
     key,
